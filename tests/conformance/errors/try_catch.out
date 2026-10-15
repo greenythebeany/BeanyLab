@@ -1,0 +1,4 @@
+pkg:bad
+Value 7 is bad
+Index exceeds the number of array elements. Index 5 must not exceed 3.
+[error] Unrecognized function or variable 'undefinedThing'.

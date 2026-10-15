@@ -1,0 +1,29 @@
+c =
+
+  1×3 cell array
+
+    {[1]}  {'two'}  {[3 4]}
+
+x =
+
+     3     4
+
+s = 
+
+  struct with fields:
+
+    name: 'beany'
+     val: 3
+
+n = 2
+
+second =
+
+    'Linus'
+
+names =
+
+  1×2 cell array
+
+    {'name'}  {'val'}
+

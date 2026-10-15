@@ -1,0 +1,8 @@
+# Store text with LF endings so tests and expected outputs match on every OS.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.mat binary
+*.xlsx binary

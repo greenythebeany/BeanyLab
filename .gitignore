@@ -1,0 +1,18 @@
+# Build output
+/target
+/node_modules
+/dist
+/src-tauri/gen
+
+# Local-only material. Never publish: the inventory describes a proprietary
+# installation and must stay out of the clean-room code base.
+/matlab-inventory/
+*.sqlite
+
+# Editor and tool settings
+/.claude/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

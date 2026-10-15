@@ -1,0 +1,18 @@
+[package]
+name = "beany-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "BeanyLab command-line REPL, script runner and local UI server"
+
+[[bin]]
+name = "beany"
+path = "src/main.rs"
+
+[dependencies]
+beany-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tiny_http = "0.12"

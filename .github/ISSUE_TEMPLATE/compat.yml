@@ -1,0 +1,29 @@
+name: Compatibility problem
+description: A .m file or snippet doesn't run, or gives different results than expected.
+labels: [compat]
+body:
+  - type: textarea
+    id: code
+    attributes:
+      label: Smallest code that shows the problem
+      description: Only share code you are allowed to share.
+      render: matlab
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What BeanyLab did (output or error)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: BeanyLab version and OS
+      placeholder: "0.1.0, Windows 11"

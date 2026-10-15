@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BeanyLab</title>
+    <link rel="icon" href="./app-icon.svg" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="titlebar">
+        <span class="app-icon" id="app-icon"></span>
+        <span class="app-name">BeanyLab</span>
+        <span class="title-sep">—</span>
+        <span id="title-file" class="title-file">Command Window</span>
+        <span class="spacer"></span>
+        <span id="busy-chip" class="busy-chip" hidden>Busy</span>
+      </header>
+      <nav class="ribbon-tabs" id="ribbon-tabs"></nav>
+      <section class="toolstrip" id="toolstrip"></section>
+      <div class="addressbar">
+        <button class="ib" id="nav-back" title="Back"></button>
+        <button class="ib" id="nav-forward" title="Forward"></button>
+        <button class="ib" id="nav-up" title="Up one level"></button>
+        <button class="ib" id="nav-browse" title="Browse for folder"></button>
+        <input id="cwd-input" class="cwd-input" spellcheck="false" />
+      </div>
+      <main class="desk" id="desk">
+        <aside class="pane" id="pane-files">
+          <div class="pane-head"><span>Current Folder</span><button class="ib small" id="files-refresh" title="Refresh"></button></div>
+          <div class="file-cols"><span>Name</span></div>
+          <div class="pane-body" id="file-list" tabindex="0"></div>
+          <div class="file-details" id="file-details"></div>
+        </aside>
+        <div class="splitter v" data-pane="pane-files" data-side="left"></div>
+        <section class="center" id="center">
+          <div class="pane" id="pane-editor">
+            <div class="editor-tabs" id="editor-tabs"></div>
+            <div class="editor-host" id="editor-host"></div>
+            <div class="var-host" id="var-host" hidden></div>
+            <div class="editor-empty" id="editor-empty">
+              <div class="empty-inner">
+                <div class="empty-icon" id="empty-icon"></div>
+                <p>No file open</p>
+                <p class="hint"><kbd>Ctrl</kbd>+<kbd>N</kbd> new script &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>O</kbd> open file &nbsp;·&nbsp; double-click a <code>.m</code> file</p>
+              </div>
+            </div>
+          </div>
+          <div class="splitter h" data-pane="pane-editor"></div>
+          <div class="pane" id="pane-command">
+            <div class="pane-head"><span>Command Window</span><span class="spacer"></span><button class="ib small" id="cmd-clear" title="Clear Command Window"></button></div>
+            <div class="cmd-body" id="cmd-body">
+              <div class="cmd-out" id="cmd-out"></div>
+              <div class="cmd-line"><span class="prompt" id="cmd-prompt">&gt;&gt;</span><textarea id="cmd-in" rows="1" spellcheck="false" autocomplete="off"></textarea></div>
+            </div>
+          </div>
+        </section>
+        <div class="splitter v" data-pane="pane-right" data-side="right"></div>
+        <aside class="right" id="pane-right">
+          <div class="pane" id="pane-workspace">
+            <div class="pane-head"><span>Workspace</span></div>
+            <div class="pane-body">
+              <table class="ws-table">
+                <thead><tr><th>Name</th><th>Value</th><th>Size</th><th>Class</th></tr></thead>
+                <tbody id="ws-body"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="splitter h" data-pane="pane-workspace"></div>
+          <div class="pane" id="pane-history">
+            <div class="pane-head"><span>Command History</span></div>
+            <div class="pane-body" id="history-list"></div>
+          </div>
+        </aside>
+      </main>
+      <footer class="statusbar">
+        <span id="status-text">Ready</span>
+        <span class="spacer"></span>
+        <span id="status-pos"></span>
+      </footer>
+      <div id="figures-layer"></div>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
