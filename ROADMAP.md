@@ -4,11 +4,13 @@ The plan for building BeanyLab into a working, open-source numeric computing env
 
 ## Goal
 
-**Version 1.0:** a student or engineer can install BeanyLab, open their existing `.m` files, and run them unmodified. That covers scripts, functions, classes, plots, `.mat` data and the common toolbox functions used in university engineering courses.
+**Version 1.0:** a student or engineer can install BeanyLab, open their existing `.m` files, and run them unmodified. That covers scripts, functions, classes, plots, `.mat` data and the common toolbox functions used in university engineering courses. It also includes a block-diagram simulator for building and running dynamic-system models.
 
-**Measured by:** BeanyLab runs at least **90% of the compatibility corpus** (see M0) with correct output.
+**Measured by:**
+- BeanyLab runs at least **90% of the compatibility corpus** (see M0) with correct output.
+- The simulator passes its reference-model suite (see M1).
 
-After 1.0, the block-diagram simulator (M8) and wider toolbox coverage follow.
+After 1.0, wider toolbox coverage follows (M8).
 
 ## Ground rules
 
@@ -68,14 +70,65 @@ Set the project up so others can see, build, test and contribute.
   - A per-area pass/fail report, with optional JSON output.
 - [ ] **Compatibility corpus:**
   - [x] Scaffold in `tests/corpus`, scored in CI.
-  - [ ] Add real programs: course files (with permission) and permissively licensed `.m` repositories. Target at least 30 programs before M1.
+  - [ ] Add real programs: course files (with permission) and permissively licensed `.m` repositories. Target at least 30 programs before M2, the first language milestone.
 - [x] Nightly installer workflow written (`.github/workflows/nightly.yml`); first run on GitHub still pending.
 
 **Exit:**
 - A fresh clone builds on both platforms with one command.
 - CI publishes the test results and the corpus score.
 
-## M1 — Language completeness (6–8 weeks)
+## M1 — Block-diagram simulator (10–12 weeks)
+
+Moved here from after 1.0 on 2026-10-16 (decision D5). A visual editor for dynamic-system models, plus the engine that simulates them. It builds on the existing interpreter and figure system.
+
+Because the language milestones now come later, the simulator only uses language features that already work. Its blocks are implemented in Rust, except the user-code block. The ODE solvers it needs are built here and also exposed as `ode45`/`ode23` at the command line, which moves those two items out of M5.
+
+**Model format and engine**
+- [ ] **Open model format:** a `.bmdl` file (JSON inside a zip) holding blocks, parameters, connections, subsystems and solver settings. The format is versioned and documented in `docs/model-format.md`.
+- [ ] **Execution order:** sort blocks by data dependency, detect algebraic loops and report them clearly, and propagate signal sizes.
+- [ ] **Sample times:** continuous, discrete (per-block sample time and offset), inherited, and constant.
+- [ ] **Solvers:**
+  - Fixed step: Euler, Heun, RK4.
+  - Variable step: Dormand–Prince 5(4) (`ode45`-style) and Bogacki–Shampine 3(2) (`ode23`-style), with relative and absolute tolerances.
+  - A stiff solver (Rosenbrock or BDF) is planned for the same milestone if time allows; otherwise it moves to M5.
+- [ ] **Zero-crossing detection** for discontinuous blocks (Switch, Saturation, Relay, Sign) and for state resets.
+- [ ] **Model parameters** from the workspace (`K = 2` in the command window, `K` in a Gain block), checked before the simulation starts.
+- [ ] **Command-line control:** `out = sim('model')`, plus `open_system`/`new_system`, `set_param`/`get_param` for scripting and batch runs.
+
+**Block library** (each block with a parameter dialog, an icon and conformance tests)
+- [ ] **Sources:** Constant, Step, Ramp, Sine Wave, Pulse Generator, Clock, Signal Generator, From Workspace, Random Number.
+- [ ] **Sinks:** Scope, To Workspace, Display, Terminator, Stop Simulation.
+- [ ] **Math:** Gain, Sum, Product, Abs, Sign, Math Function (exp/log/sqrt/...), Trigonometric Function, MinMax, Dot Product.
+- [ ] **Continuous:** Integrator (with limits and reset), Derivative, Transfer Fcn, State-Space, Zero-Pole, Transport Delay, PID Controller.
+- [ ] **Discrete:** Unit Delay, Discrete Transfer Fcn, Discrete State-Space, Discrete-Time Integrator, Zero-Order Hold, Discrete PID.
+- [ ] **Nonlinear:** Saturation, Dead Zone, Relay, Rate Limiter, Quantizer, 1-D Lookup Table.
+- [ ] **Routing and logic:** Mux, Demux, Switch, Multiport Switch, Relational Operator, Logical Operator, Goto/From, Bus Creator/Selector (basic).
+- [ ] **Structure:** Subsystem, Inport, Outport, Enabled Subsystem.
+- [ ] **User code:** a block whose output is a `.m` function of its inputs, run by the interpreter.
+
+**Editor (in the desktop app)**
+- [ ] A model editor tab: block library browser, drag-and-drop canvas, ports, signal lines with routing and branch points, zoom and pan, multi-select, copy/paste, undo/redo.
+- [ ] Double-click a block to edit its parameters; double-click a subsystem to open it; breadcrumb navigation.
+- [ ] Run, Pause, Stop, stop time and solver settings in the toolstrip; progress and errors linked to the block that caused them.
+- [ ] **Scope window:** live-updating traces during simulation, multiple axes, autoscale, cursors.
+- [ ] Logged signals appear in the workspace as `out`, with times and values.
+- [ ] Current Folder shows `.bmdl` files with the model icon; double-click opens them.
+
+**Not in M1:** importing `.slx` files (zipped XML) is a later interoperability item. Code generation and hardware targets are out of scope.
+
+**Exit:**
+- **Reference-model suite**, written by us with known analytic or independently computed answers, all within tolerance:
+  - first-order lag step response
+  - mass–spring–damper
+  - closed-loop PID speed control
+  - discrete low-pass filter
+  - bouncing ball (zero-crossing and state reset)
+  - Van der Pol oscillator
+  - a model using the user-code block
+- A model with an algebraic loop produces a clear error that points at the loop.
+- Three people who haven't seen the editor build and run a feedback-control model from scratch, with no blocking issues.
+
+## M2 — Language completeness (6–8 weeks)
 
 Everything a typical script or function file can contain, except `classdef`.
 
@@ -93,7 +146,7 @@ Everything a typical script or function file can contain, except `classdef`.
 
 **Exit:** language conformance suite at least 95% passing, and corpus at least 60%.
 
-## M2 — Classes (`classdef`) (4–6 weeks)
+## M3 — Classes (`classdef`) (4–6 weeks)
 
 - [ ] Value and handle classes, properties (with defaults and validation), methods, constructors.
 - [ ] Static methods, `Access`/`SetAccess`, `Dependent` properties with get/set methods.
@@ -104,7 +157,9 @@ Everything a typical script or function file can contain, except `classdef`.
 
 **Exit:** OOP conformance suite at least 95%, and corpus at least 70%.
 
-## M3 — Performance (4 weeks)
+## M4 — Performance (4 weeks)
+
+The simulator's inner loop is part of the benchmark suite, so model runs get faster too.
 
 - [ ] Copy-on-write arrays (shared storage), so passing and assigning large matrices no longer copies them.
 - [ ] A bytecode compiler and register VM that replaces the tree walker on hot paths.
@@ -116,12 +171,12 @@ Everything a typical script or function file can contain, except `classdef`.
 - Scalar loops run at least 20 million iterations per second (today about 1.4 million).
 - Vectorized math is within 2× of NumPy on the benchmark suite.
 
-## M4 — Core numerical library (6 weeks, then ongoing)
+## M5 — Core numerical library (6 weeks, then ongoing)
 
 - [ ] Linear algebra: complex `eig`/`svd`/`schur`/`hess`, `expm`/`logm`/`sqrtm`, `lsqminnorm`, `orth`/`null`, condition estimates.
 - [ ] Sparse matrices: `sparse`/`full`/`spdiags`/`speye`, sparse `\`, `eigs`.
 - [ ] FFT family (`rustfft`): `fft`/`ifft`/`fft2`/`fftshift`, `conv` via FFT.
-- [ ] ODE solvers: `ode45`, `ode23`, `ode15s`, `ode113`, with `odeset` options and events.
+- [ ] ODE solvers: `ode15s`, `ode113`, `odeset` options and events. (`ode45` and `ode23` arrive with the simulator in M1.)
 - [ ] Integration and roots: `integral`/`integral2`, `quadgk`, `fzero`, `fminbnd`, `fminsearch`.
 - [ ] Interpolation: `interp1` (all methods), `interp2`, `spline`, `pchip`, `griddedInterpolant`.
 - [ ] File I/O:
@@ -133,18 +188,18 @@ Everything a typical script or function file can contain, except `classdef`.
 
 **Exit:** numerics conformance suite at least 95%, and corpus at least 80%.
 
-## M5 — Graphics system (6 weeks)
+## M6 — Graphics system (6 weeks)
 
 - [ ] Handle graphics object tree: figure → axes → line/surface/patch/text/image objects, plus `get`/`set`/`gcf`/`gca`/`gco`/`findobj`/`delete`.
 - [ ] Complete axes properties: ticks, labels, limits, scales, colors, fonts, `yyaxis`, `polaraxes`.
 - [ ] `patch`, `fill`, `quiver`, `contour3`, `waterfall`, `bar3`, `pcolor`, `polarplot`, `histogram2`.
 - [ ] Interactive zoom/pan/rotate, data tips, docked or undocked figures, figure toolbar.
 - [ ] Export: `saveas`/`exportgraphics`/`print` to PNG, SVG and PDF.
-- [ ] **Decision point:** keep Plotly or move to our own WebGL/wgpu renderer (decision D3), based on fidelity and animation speed measured here.
+- [ ] **Decision point:** keep Plotly or move to our own WebGL/wgpu renderer (decision D3), based on fidelity and animation speed measured here, including the simulator's live scopes.
 
 **Exit:** graphics conformance suite (image comparison) at least 90%, and corpus at least 85%.
 
-## M6 — Desktop IDE (6 weeks)
+## M7 — Desktop IDE (6 weeks)
 
 - [ ] **Debugger:** breakpoints (including conditional), step in/over/out, call-stack panel, inspect variables in any frame, `dbstop if error`.
 - [ ] **Editor:** signature help, go to definition, find references, rename, code analyzer warnings, auto-formatting.
@@ -157,13 +212,13 @@ Everything a typical script or function file can contain, except `classdef`.
 
 ## Release 1.0
 
-- [ ] Corpus at least 90%, all conformance suites at least 95%.
+- [ ] Corpus at least 90%, all conformance suites at least 95%, simulator reference-model suite passing.
 - [ ] Signed installers for Windows and Linux, auto-update, documentation website.
 - [ ] No open crash or data-loss bugs.
 
 ---
 
-## M7 — Toolboxes (after 1.0, ongoing)
+## M8 — Toolboxes (after 1.0, ongoing)
 
 Ordered by how often course and engineering code uses them:
 
@@ -174,21 +229,9 @@ Ordered by how often course and engineering code uses them:
 5. **Image processing basics** and **curve fitting**.
 6. **Symbolic math:** evaluated separately; a large engine that may build on an existing permissive CAS.
 
-**Package manager:** `beany install <pkg>` from a community registry, so others can contribute toolboxes.
+**Package manager:** `beany install <pkg>` from a community registry, so others can contribute toolboxes and block libraries.
 
-## M8 — Block-diagram simulator (after 1.0, about 12+ weeks)
-
-- [ ] **Open model format:** JSON in a zip. Opening `.slx` (zipped XML) is a later interoperability step.
-- [ ] **Canvas editor:** blocks, ports, signal lines, subsystems, parameter dialogs.
-- [ ] **Solver engine:** fixed and variable step, continuous (ODE) and discrete states, zero-crossing detection.
-- [ ] **Block library:**
-  - Sources: Step, Sine, Constant, Clock, From Workspace.
-  - Sinks: Scope, To Workspace, Display.
-  - Math, Gain, Sum, Product.
-  - Integrator, Transfer Fcn, State-Space, PID, Saturation.
-  - Discrete blocks, Mux/Demux, Switch, Logic.
-  - A user-code block that runs `.m` functions.
-- [ ] Scope viewer, signal logging to the workspace, scripting from the command window (`sim`).
+**Simulator extensions:** `.slx` import, more block libraries (physical modeling, state machines), and code generation are evaluated here.
 
 ---
 
@@ -198,8 +241,9 @@ Ordered by how often course and engineering code uses them:
 |---|---|---|
 | D1 | License | **Decided 2026-10-15: Apache-2.0** (permissive, with a patent grant). |
 | D2 | Project name | **Decided 2026-10-15: BeanyLab.** A web and GitHub search found no software or repository with this name; the nearest is BeagleLAB, an unrelated embedded-hardware project. A formal trademark search is still advisable before any commercial use. |
-| D3 | Plot renderer | Open. Decide at M5 using measurements. |
+| D3 | Plot renderer | Open. Decide at M6 using measurements. |
 | D4 | Hosting | **Decided 2026-10-15: GitHub** (CI, releases, issues, discussions). |
+| D5 | Simulator timing | **Decided 2026-10-16: build it right after M0 (as M1)**, ahead of the language milestones, and include it in 1.0. |
 
 ## Progress log
 
@@ -211,7 +255,7 @@ Ordered by how often course and engineering code uses them:
 ## Effort estimate
 
 These estimates assume one developer working with an AI assistant, about 20–30 hours a week:
-- M0–M6, through 1.0: roughly **8–10 months**.
-- Toolboxes and the simulator: another **6–12 months**.
+- M0–M7, through 1.0 including the simulator: roughly **11–13 months**.
+- Toolboxes after 1.0: another **4–8 months** for the first set, then ongoing.
 
 The estimates will be updated at each milestone exit using the actual pace.
