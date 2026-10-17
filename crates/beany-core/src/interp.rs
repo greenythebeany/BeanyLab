@@ -82,6 +82,8 @@ pub struct Interp {
     /// Variable names of plain-identifier arguments, for functions like `table`
     /// that name their outputs after their inputs.
     pub arg_names: Vec<Option<String>>,
+    /// Block-diagram models loaded or built by scripts (new_system/load_system), by name.
+    pub open_models: HashMap<String, (crate::sim::Model, Option<PathBuf>)>,
 }
 
 impl Default for Interp {
@@ -119,6 +121,7 @@ impl Interp {
             history: Vec::new(),
             last_builtin: String::new(),
             arg_names: Vec::new(),
+            open_models: HashMap::new(),
         };
         crate::builtins::register(&mut it);
         it

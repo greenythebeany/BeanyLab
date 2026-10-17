@@ -26,7 +26,10 @@ pub enum Sample {
 /// What a sink records.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogKind {
-    Scope,
+    /// `separate`: one axes per input instead of all signals on one axes.
+    Scope {
+        separate: bool,
+    },
     ToWorkspace(String),
     Outport(usize),
     Display,
@@ -220,7 +223,10 @@ pub fn library() -> Vec<BlockDef> {
             "Scope",
             "Sinks",
             "Plots its inputs against time.",
-            vec![p("inputs", "Number of inputs", "1")],
+            vec![
+                p("inputs", "Number of inputs", "1"),
+                c("layout", "Axes", "shared", "choice:shared|one per input"),
+            ],
         ),
         d(
             "ToWorkspace",
@@ -545,6 +551,24 @@ pub fn library() -> Vec<BlockDef> {
             ],
         ),
         d(
+            "MultiportSwitch",
+            "Routing",
+            "Input 1 picks which data input passes (1-based, rounded and clamped).",
+            vec![p("inputs", "Number of data inputs", "2")],
+        ),
+        d(
+            "Goto",
+            "Routing",
+            "Sends its input to every From block with the same tag, without a line.",
+            vec![t("tag", "Tag", "A")],
+        ),
+        d(
+            "From",
+            "Routing",
+            "Receives the signal of the Goto block with the same tag.",
+            vec![t("tag", "Tag", "A")],
+        ),
+        d(
             "RelationalOperator",
             "Routing",
             "Compares two inputs.",
@@ -564,6 +588,12 @@ pub fn library() -> Vec<BlockDef> {
             "Subsystem",
             "Structure",
             "Groups blocks. Double-click to open.",
+            vec![],
+        ),
+        d(
+            "EnabledSubsystem",
+            "Structure",
+            "Subsystem that runs only while its enable input (last port) is positive; outputs and states hold otherwise.",
             vec![],
         ),
         d(
@@ -624,6 +654,13 @@ pub fn ports_for(
             (1 + reset as usize + ext as usize, 1 + state as usize)
         }
         "Subsystem" => sub_ports.unwrap_or((1, 1)),
+        "EnabledSubsystem" => {
+            let (i, o) = sub_ports.unwrap_or((1, 1));
+            (i + 1, o)
+        }
+        "MultiportSwitch" => (n("inputs", 2).max(1) + 1, 1),
+        "Goto" => (1, 0),
+        "From" => (0, 1),
         _ => (1, 1),
     }
 }
@@ -824,7 +861,9 @@ pub fn create(kind: &str, p: &Params, ports: (usize, usize)) -> SimResult<Box<dy
         }
         "Scope" => Box::new(Sink {
             n: ports.0,
-            kind: LogKind::Scope,
+            kind: LogKind::Scope {
+                separate: p.text("layout") == "one per input",
+            },
         }),
         "ToWorkspace" => {
             let v = p.text("variable");
@@ -1093,7 +1132,10 @@ pub fn create(kind: &str, p: &Params, ports: (usize, usize)) -> SimResult<Box<dy
             op: p.text("op"),
             n: ports.0,
         }),
-        "Inport" | "Pass" => Box::new(Pass),
+        "MultiportSwitch" => Box::new(MultiSwitch {
+            n: ports.0.saturating_sub(1).max(1),
+        }),
+        "Inport" | "Pass" | "Goto" | "From" => Box::new(Pass),
         other => return Err(format!("Unknown block type '{}'.", other)),
     })
 }
@@ -2497,7 +2539,38 @@ impl Block for Logic {
     }
 }
 
-/// Identity (Inport and subsystem boundaries after flattening).
+struct MultiSwitch {
+    n: usize,
+}
+impl Block for MultiSwitch {
+    fn ports(&self) -> (usize, usize) {
+        (self.n + 1, 1)
+    }
+    fn output(
+        &mut self,
+        _: &mut Ctx,
+        _: f64,
+        _: &[f64],
+        u: &[Vec<f64>],
+        y: &mut [Vec<f64>],
+    ) -> SimResult<()> {
+        let k = first(u)
+            .first()
+            .copied()
+            .unwrap_or(1.0)
+            .round()
+            .clamp(1.0, self.n as f64) as usize;
+        y[0] = u[k].clone();
+        Ok(())
+    }
+    fn zero_crossings(&self, _: f64, _: &[f64], u: &[Vec<f64>]) -> Vec<f64> {
+        // Each half-integer of the control signal is a switching point.
+        let c = first(u).first().copied().unwrap_or(1.0);
+        (1..self.n).map(|k| c - (k as f64 + 0.5)).collect()
+    }
+}
+
+/// Identity (Inport, Goto/From and subsystem boundaries after flattening).
 struct Pass;
 impl Block for Pass {
     fn ports(&self) -> (usize, usize) {

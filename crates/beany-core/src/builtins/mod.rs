@@ -16,6 +16,7 @@ use crate::value::*;
 
 pub use objects::object_text;
 pub use system::bytes_of;
+pub use system::resolve as resolve_path;
 pub use text::format_printf;
 
 pub fn register(it: &mut Interp) {
@@ -28,6 +29,7 @@ pub fn register(it: &mut Interp) {
     stats::register(it);
     objects::register(it);
     crate::sim::run::register(it);
+    crate::sim::ode::register(it);
 }
 
 pub(crate) type R = MResult<Vec<Value>>;

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "enabled_counter",
+  "solver": { "solver": "ode45", "stop_time": "4", "max_step": "0.01" },
+  "blocks": [
+    { "id": "one", "type": "Constant", "name": "Rate", "x": 40, "y": 60, "params": { "value": "1" } },
+    { "id": "pulse", "type": "PulseGenerator", "name": "Enable", "x": 40, "y": 160, "params": { "amplitude": "1", "period": "2", "width": "50", "delay": "0" } },
+    { "id": "cnt", "type": "EnabledSubsystem", "name": "Counter", "x": 200, "y": 80, "w": 110, "h": 80,
+      "system": {
+        "blocks": [
+          { "id": "in", "type": "Inport", "name": "rate", "x": 40, "y": 100, "params": { "port": "1" } },
+          { "id": "int", "type": "Integrator", "name": "Time on", "x": 160, "y": 100 },
+          { "id": "out", "type": "Outport", "name": "elapsed", "x": 300, "y": 100, "params": { "port": "1" } }
+        ],
+        "lines": [
+          { "src": { "block": "in", "port": 1 }, "dst": { "block": "int", "port": 1 } },
+          { "src": { "block": "int", "port": 1 }, "dst": { "block": "out", "port": 1 } }
+        ]
+      }
+    },
+    { "id": "goto", "type": "Goto", "name": "Goto elapsed", "x": 380, "y": 95, "params": { "tag": "elapsed" } },
+    { "id": "from", "type": "From", "name": "From elapsed", "x": 40, "y": 280, "params": { "tag": "elapsed" } },
+    { "id": "sel", "type": "Constant", "name": "Selector", "x": 40, "y": 360, "params": { "value": "2" } },
+    { "id": "zero", "type": "Constant", "name": "Zero", "x": 40, "y": 440, "params": { "value": "0" } },
+    { "id": "mps", "type": "MultiportSwitch", "name": "Pick", "x": 220, "y": 320, "h": 90, "params": { "inputs": "2" } },
+    { "id": "log", "type": "ToWorkspace", "name": "Log on-time", "x": 380, "y": 340, "params": { "variable": "on_time" } },
+    { "id": "scope", "type": "Scope", "name": "On-time", "x": 380, "y": 240 }
+  ],
+  "lines": [
+    { "src": { "block": "one", "port": 1 }, "dst": { "block": "cnt", "port": 1 } },
+    { "src": { "block": "pulse", "port": 1 }, "dst": { "block": "cnt", "port": 2 } },
+    { "src": { "block": "cnt", "port": 1 }, "dst": { "block": "goto", "port": 1 } },
+    { "src": { "block": "sel", "port": 1 }, "dst": { "block": "mps", "port": 1 } },
+    { "src": { "block": "zero", "port": 1 }, "dst": { "block": "mps", "port": 2 } },
+    { "src": { "block": "from", "port": 1 }, "dst": { "block": "mps", "port": 3 } },
+    { "src": { "block": "mps", "port": 1 }, "dst": { "block": "log", "port": 1 } },
+    { "src": { "block": "mps", "port": 1 }, "dst": { "block": "scope", "port": 1 } }
+  ]
+}

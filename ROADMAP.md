@@ -85,7 +85,7 @@ Because the language milestones now come later, the simulator only uses language
 
 **Model format and engine**
 - [x] **Open model format:** a `.bmdl` file holding blocks, parameters, connections, subsystems and solver settings. Plain JSON rather than JSON inside a zip, so models diff well in version control (changed 2026-10-17). Versioned.
-  - [ ] Document the format in `docs/model-format.md`.
+  - [x] Document the format in `docs/model-format.md`.
 - [x] **Execution order:** sort blocks by data dependency, detect algebraic loops and report only the blocks on the loop. Signal widths flow dynamically.
 - [x] **Sample times:** continuous, discrete (per-block period), inherited, and constant.
   - [ ] Per-block sample-time offsets in the dialogs.
@@ -93,11 +93,11 @@ Because the language milestones now come later, the simulator only uses language
   - Fixed step: Euler (ode1), Heun (ode2), RK4 (ode4).
   - Variable step: Dormand–Prince 5(4) (ode45) and Bogacki–Shampine 3(2) (ode23), with relative and absolute tolerances.
   - [ ] Stiff solver (Rosenbrock or BDF); moves to M5 if not done here.
-  - [ ] `ode45`/`ode23` as command-line functions.
+  - [x] `ode45`/`ode23` (with `odeset` RelTol/AbsTol/MaxStep/InitialStep) as command-line functions.
 - [x] **Zero-crossing detection** by bisection, for Step, Ramp, Pulse, Switch, Saturation, Dead Zone, Relay, Abs, Sign, Relational Operator, integrator limits and integrator resets.
 - [x] **Model parameters** from the workspace (`K = 2` in the command window, `K` in a Gain block), evaluated before the simulation starts; errors name the block and parameter.
 - [x] **Command-line control:** `out = sim('model', 'StopTime', '5')`, `get_param`, `set_param`, `open_system`.
-  - [ ] `new_system`, `add_block`, `add_line` for building models from scripts.
+  - [x] `new_system`, `load_system`, `add_block`, `add_line`, `save_system`, `close_system` for building models from scripts.
 
 **Block library** (each block with a parameter dialog and an icon; every block is exercised by `every_library_block_runs`)
 - [x] **Sources:** Constant, Step, Ramp, Sine Wave, Pulse Generator, Clock, Signal Generator, From Workspace, Random Number.
@@ -106,8 +106,8 @@ Because the language milestones now come later, the simulator only uses language
 - [x] **Continuous:** Integrator (limits, reset, external initial condition, state port), Derivative, Transfer Fcn, State-Space, Zero-Pole, Transport Delay, PID Controller.
 - [x] **Discrete:** Unit Delay, Discrete Transfer Fcn, Discrete State-Space, Discrete-Time Integrator, Zero-Order Hold, Discrete PID.
 - [x] **Nonlinear:** Saturation, Dead Zone, Relay, Rate Limiter, Quantizer, 1-D Lookup Table.
-- [ ] **Routing and logic:** done: Mux, Demux, Switch, Relational Operator, Logical Operator. Open: Multiport Switch, Goto/From, Bus Creator/Selector.
-- [ ] **Structure:** done: Subsystem, Inport, Outport. Open: Enabled Subsystem.
+- [ ] **Routing and logic:** done: Mux, Demux, Switch, Multiport Switch, Goto/From, Relational Operator, Logical Operator. Open: Bus Creator/Selector.
+- [x] **Structure:** Subsystem, Enabled Subsystem, Inport, Outport.
 - [x] **User code:** User Function block calls a `.m` function; Fcn block evaluates an expression in `u`.
 
 **Editor (in the desktop app)**
@@ -116,7 +116,8 @@ Because the language milestones now come later, the simulator only uses language
 - [x] Run and Stop, stop time, solver choice and solver settings; errors highlight the block that caused them.
   - [ ] Pause and resume.
 - [x] **Scope window:** traces update during the simulation in the desktop app, autoscale, zoom, pan and image export.
-  - [ ] Multiple axes per scope, cursors.
+  - [x] One axes per input (Scope "Axes" parameter).
+  - [ ] Cursors.
 - [x] Logged signals appear in the workspace as `out` (`out.tout`, To Workspace variables, `out.yout`).
 - [x] Current Folder shows `.bmdl` files with the model icon; double-click opens them; right-click → Simulate.
 - [ ] Display blocks show their final value on the canvas (done); live values during the run (open).

@@ -47,6 +47,62 @@ pub fn resolve_model(it: &Interp, name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// Block type from a library path such as "beany/Continuous/Transfer Fcn" or "Gain".
+pub fn block_type_from(src: &str) -> Option<&'static str> {
+    let last = src.rsplit('/').next().unwrap_or(src);
+    let norm = |s: &str| {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+            .to_lowercase()
+    };
+    let want = norm(last);
+    let alias = match want.as_str() {
+        "in1" | "in" => "Inport",
+        "out1" | "out" => "Outport",
+        "pidcontroller" => "PID",
+        "discretepidcontroller" => "DiscretePID",
+        "trigonometricfunction" => "TrigFunction",
+        "1dlookuptable" | "lookuptable" => "Lookup1D",
+        "matlabfunction" | "interpretedmatlabfunction" => "UserFunction",
+        "discretetimeintegrator" => "DiscreteIntegrator",
+        "add" | "subtract" => "Sum",
+        "multiply" | "divide" => "Product",
+        _ => "",
+    };
+    super::blocks::library()
+        .into_iter()
+        .map(|d| d.kind)
+        .find(|k| *k == alias || norm(k) == want)
+}
+
+/// The model's base name: "dir/pid.bmdl" -> "pid".
+fn model_key(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    base.strip_suffix(".bmdl").unwrap_or(base).to_string()
+}
+
+/// A model open in memory (from new_system/load_system), else loaded from its file.
+pub fn get_model(it: &Interp, name: &str) -> MResult<(Model, Option<PathBuf>)> {
+    if let Some((m, p)) = it.open_models.get(&model_key(name)) {
+        return Ok((m.clone(), p.clone()));
+    }
+    let (m, p) = load_model(it, name)?;
+    Ok((m, Some(p)))
+}
+
+/// Store an edited model: back into memory if it is open there, else to its file.
+fn put_model(it: &mut Interp, name: &str, model: Model, file: Option<PathBuf>) -> MResult<()> {
+    let key = model_key(name);
+    if let Some(slot) = it.open_models.get_mut(&key) {
+        slot.0 = model;
+        return Ok(());
+    }
+    let file = file.ok_or_else(|| merr!("Model '{}' has no file; use save_system.", name))?;
+    std::fs::write(&file, model.to_json())
+        .map_err(|e| merr!("Unable to save '{}': {}", file.display(), e))
+}
+
 pub fn load_model(it: &Interp, name: &str) -> MResult<(Model, PathBuf)> {
     let p = resolve_model(it, name).ok_or_else(|| {
         merr!(
@@ -62,9 +118,9 @@ pub fn load_model(it: &Interp, name: &str) -> MResult<(Model, PathBuf)> {
 
 fn draw_scopes(it: &mut Interp, tout: &[f64], logs: &[Log]) {
     for log in logs {
-        if log.kind != LogKind::Scope {
+        let LogKind::Scope { separate } = log.kind else {
             continue;
-        }
+        };
         let title = log.name.clone();
         let id = match it
             .graphics
@@ -81,10 +137,15 @@ fn draw_scopes(it: &mut Interp, tout: &[f64], logs: &[Log]) {
                 id
             }
         };
+        // One group of lines per axes: all inputs together, or one input per axes.
+        let mut groups: Vec<(Vec<Series>, Vec<String>)> = Vec::new();
         let mut series = Vec::new();
         let mut names = Vec::new();
         let mut color = 0;
         for (p, rows) in log.data.iter().enumerate() {
+            if separate && p > 0 {
+                groups.push((std::mem::take(&mut series), std::mem::take(&mut names)));
+            }
             let width = rows.iter().map(|r| r.len()).max().unwrap_or(1);
             for k in 0..width {
                 let y: Vec<f64> = rows
@@ -120,21 +181,38 @@ fn draw_scopes(it: &mut Interp, tout: &[f64], logs: &[Log]) {
                 });
             }
         }
-        let show_legend = names.len() > 1;
-        let ax = Axes {
-            grid: (1, 1),
-            cells: vec![1],
-            series,
-            title: Some(title.clone()),
-            xlabel: Some("Time (s)".into()),
-            grid_on: true,
-            box_on: true,
-            legend: if show_legend { Some(names) } else { None },
-            legend_visible: show_legend,
-            ..Default::default()
-        };
+        groups.push((series, names));
+        let rows = groups.len();
+        let axes: Vec<Axes> = groups
+            .into_iter()
+            .enumerate()
+            .map(|(i, (series, names))| {
+                let show_legend = names.len() > 1;
+                Axes {
+                    grid: (rows, 1),
+                    cells: vec![i + 1],
+                    series,
+                    title: if i == 0 { Some(title.clone()) } else { None },
+                    xlabel: if i + 1 == rows {
+                        Some("Time (s)".into())
+                    } else {
+                        None
+                    },
+                    ylabel: if rows > 1 {
+                        Some(format!("In{}", i + 1))
+                    } else {
+                        None
+                    },
+                    grid_on: true,
+                    box_on: true,
+                    legend: if show_legend { Some(names) } else { None },
+                    legend_visible: show_legend,
+                    ..Default::default()
+                }
+            })
+            .collect();
         if let Some(f) = it.graphics.figures.iter_mut().find(|f| f.id == id) {
-            f.axes = vec![ax];
+            f.axes = axes;
             f.current_axes = 0;
         }
         it.graphics.mark(id);
@@ -181,7 +259,7 @@ pub fn run(
                 id: log.id.clone(),
                 value: log.data[0].last().cloned().unwrap_or_default(),
             }),
-            LogKind::Scope => {}
+            LogKind::Scope { .. } => {}
         }
     }
     if !outports.is_empty() {
@@ -238,7 +316,7 @@ pub fn register(it: &mut Interp) {
             return Err(merr!("Not enough input arguments."));
         }
         let name = a[0].text()?;
-        let (mut model, path) = load_model(it, &name)?;
+        let (mut model, _) = get_model(it, &name)?;
         let mut i = 1;
         while i + 1 < a.len() {
             let key = a[i].text()?;
@@ -257,10 +335,7 @@ pub fn register(it: &mut Interp) {
             }
             i += 2;
         }
-        let label = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or(name);
+        let label = model_key(&name);
         let (out, _) = run(it, &model, &label).map_err(|e| e.0)?;
         if nargout > 0 {
             return Ok(vec![out]);
@@ -275,7 +350,7 @@ pub fn register(it: &mut Interp) {
         let path = a[0].text()?;
         let key = a[1].text()?;
         let parts: Vec<&str> = path.split('/').collect();
-        let (mut model, _) = load_model(it, parts[0])?;
+        let (mut model, _) = get_model(it, parts[0])?;
         if parts.len() == 1 {
             let s = &model.solver;
             let v = match key.to_lowercase().as_str() {
@@ -322,7 +397,7 @@ pub fn register(it: &mut Interp) {
         }
         let path = a[0].text()?;
         let parts: Vec<&str> = path.split('/').collect();
-        let (mut model, file) = load_model(it, parts[0])?;
+        let (mut model, file) = get_model(it, parts[0])?;
         for pair in a[1..].chunks(2) {
             let key = pair[0].text()?;
             let val = match &pair[1] {
@@ -346,8 +421,197 @@ pub fn register(it: &mut Interp) {
                 blk.params.insert(key, val);
             }
         }
-        std::fs::write(&file, model.to_json())
+        put_model(it, parts[0], model, file)?;
+        Ok(vec![])
+    });
+    b.insert("new_system", |it, a, _| {
+        let name = a
+            .first()
+            .ok_or_else(|| merr!("Usage: new_system('name')"))?
+            .text()?;
+        if !crate::lexer::is_identifier(&name) {
+            return Err(merr!("'{}' is not a valid model name.", name));
+        }
+        if it.open_models.contains_key(&name) {
+            return Err(merr!("A model named '{}' is already open.", name));
+        }
+        let m = Model {
+            version: super::model::FORMAT_VERSION,
+            name: name.clone(),
+            solver: Default::default(),
+            blocks: vec![],
+            lines: vec![],
+        };
+        it.open_models.insert(name, (m, None));
+        Ok(vec![])
+    });
+    b.insert("load_system", |it, a, _| {
+        let name = a
+            .first()
+            .ok_or_else(|| merr!("Usage: load_system('name')"))?
+            .text()?;
+        let (m, p) = load_model(it, &name)?;
+        it.open_models.insert(model_key(&name), (m, Some(p)));
+        Ok(vec![])
+    });
+    b.insert("close_system", |it, a, _| {
+        match a.first() {
+            Some(v) => {
+                it.open_models.remove(&model_key(&v.text()?));
+            }
+            None => it.open_models.clear(),
+        }
+        Ok(vec![])
+    });
+    b.insert("save_system", |it, a, _| {
+        let name = a
+            .first()
+            .ok_or_else(|| merr!("Usage: save_system('name'[, 'file.bmdl'])"))?
+            .text()?;
+        let key = model_key(&name);
+        let (m, p) = it
+            .open_models
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| merr!("Model '{}' is not open.", name))?;
+        let file = match a.get(1) {
+            Some(v) => {
+                let t = v.text()?;
+                let t = if t.to_lowercase().ends_with(".bmdl") {
+                    t
+                } else {
+                    format!("{}.bmdl", t)
+                };
+                crate::builtins::resolve_path(it, &t)
+            }
+            None => p.unwrap_or_else(|| it.cwd.join(format!("{}.bmdl", key))),
+        };
+        std::fs::write(&file, m.to_json())
             .map_err(|e| merr!("Unable to save '{}': {}", file.display(), e))?;
+        it.open_models.insert(key, (m, Some(file)));
+        Ok(vec![])
+    });
+    b.insert("add_block", |it, a, _| {
+        if a.len() < 2 || a.len() % 2 != 0 {
+            return Err(merr!(
+                "Usage: add_block('library/Type', 'model/Name', 'Param', 'value', ...)"
+            ));
+        }
+        let src = a[0].text()?;
+        let dst = a[1].text()?;
+        let kind = block_type_from(&src).ok_or_else(|| merr!("Unknown block '{}'.", src))?;
+        let (model_name, block_name) = dst
+            .split_once('/')
+            .ok_or_else(|| merr!("The destination must be 'model/BlockName'."))?;
+        let (mut m, file) = get_model(it, model_name)?;
+        if m.blocks.iter().any(|b| b.name == block_name) {
+            return Err(merr!(
+                "A block named '{}' already exists in '{}'.",
+                block_name,
+                model_name
+            ));
+        }
+        let def = super::blocks::library()
+            .into_iter()
+            .find(|d| d.kind == kind)
+            .unwrap();
+        let mut params: std::collections::BTreeMap<String, String> = def
+            .params
+            .iter()
+            .map(|p| (p.name.to_string(), p.default.to_string()))
+            .collect();
+        // Auto-place in a grid; 'Position', [x y w h] overrides.
+        let k = m.blocks.len();
+        let (mut x, mut y, mut w, mut h) = (
+            60.0 + 140.0 * (k % 5) as f64,
+            80.0 + 110.0 * (k / 5) as f64,
+            70.0,
+            50.0,
+        );
+        for pair in a[2..].chunks(2) {
+            let key = pair[0].text()?;
+            if key.eq_ignore_ascii_case("Position") {
+                let p = pair[1].to_num()?.data;
+                if p.len() == 4 {
+                    // Accept [left top right bottom] like the reference software.
+                    (x, y, w, h) = (p[0], p[1], (p[2] - p[0]).max(10.0), (p[3] - p[1]).max(10.0));
+                }
+                continue;
+            }
+            let val = match &pair[1] {
+                v if v.is_text() => v.text()?,
+                v => crate::display::num_to_str(v.scalar()?),
+            };
+            if !def.params.iter().any(|p| p.name == key) {
+                return Err(merr!(
+                    "Block type {} has no parameter '{}'. Parameters: {}.",
+                    kind,
+                    key,
+                    def.params
+                        .iter()
+                        .map(|p| p.name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            params.insert(key, val);
+        }
+        let id = format!(
+            "b{}",
+            m.blocks.len() + 1 + m.blocks.iter().filter(|b| b.id.starts_with('b')).count()
+        );
+        m.blocks.push(super::BlockSpec {
+            id,
+            kind: kind.to_string(),
+            name: block_name.to_string(),
+            x,
+            y,
+            w,
+            h,
+            params,
+            system: None,
+        });
+        put_model(it, model_name, m, file)?;
+        Ok(vec![])
+    });
+    b.insert("add_line", |it, a, _| {
+        if a.len() < 3 {
+            return Err(merr!(
+                "Usage: add_line('model', 'Source/1', 'Destination/1')"
+            ));
+        }
+        let model_name = a[0].text()?;
+        let (mut m, file) = get_model(it, &model_name)?;
+        let port = |s: &str, m: &Model| -> MResult<(String, usize)> {
+            let (name, p) = s
+                .rsplit_once('/')
+                .ok_or_else(|| merr!("Ports are written 'BlockName/1'."))?;
+            let n: usize = p
+                .trim()
+                .parse()
+                .map_err(|_| merr!("'{}' is not a port number.", p))?;
+            let b = m
+                .blocks
+                .iter()
+                .find(|b| b.name == name)
+                .ok_or_else(|| merr!("Block '{}' not found in '{}'.", name, model_name))?;
+            Ok((b.id.clone(), n))
+        };
+        let (sb, sp) = port(&a[1].text()?, &m)?;
+        let (db, dp) = port(&a[2].text()?, &m)?;
+        m.lines.retain(|l| !(l.dst.block == db && l.dst.port == dp));
+        m.lines.push(super::Line {
+            src: super::PortRef {
+                block: sb,
+                port: sp,
+            },
+            dst: super::PortRef {
+                block: db,
+                port: dp,
+            },
+            points: vec![],
+        });
+        put_model(it, &model_name, m, file)?;
         Ok(vec![])
     });
     b.insert("open_system", |it, a, _| {

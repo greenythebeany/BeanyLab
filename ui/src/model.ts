@@ -124,6 +124,10 @@ function glyph(b: BlockSpec, display?: number[]): string {
     case "RelationalOperator": return txt(P.op ?? "<=", 14);
     case "LogicalOperator": return txt(P.op ?? "AND", 11);
     case "Subsystem": return txt("Subsystem", 11);
+    case "EnabledSubsystem": return txt("Enabled", 11, cy - 7) + txt("Subsystem", 11, cy + 8) + path(`M${w - 14},${h - 4} V${h - 12} H${w - 8} V${h - 4}`);
+    case "MultiportSwitch": return txt("1 2 …", 11) + path(`M${w * 0.2},${h * 0.2} L${w * 0.8},${cy}`);
+    case "Goto": return txt(`[${P.tag ?? "A"}]`, 12);
+    case "From": return txt(`[${P.tag ?? "A"}]`, 12);
     default: return txt(b.type, 10);
   }
 }
@@ -455,7 +459,7 @@ export class ModelEditor {
     this.snapshot();
     const size: Record<string, [number, number]> = {
       Sum: [40, 40], Gain: [60, 44], Mux: [10, 60], Demux: [10, 60], Scope: [56, 50], Inport: [40, 26], Outport: [40, 26],
-      TransferFcn: [100, 54], DiscreteTransferFcn: [110, 54], Fcn: [160, 44], Subsystem: [110, 70], Display: [90, 34], Terminator: [30, 30],
+      TransferFcn: [100, 54], DiscreteTransferFcn: [110, 54], Fcn: [160, 44], Subsystem: [110, 70], EnabledSubsystem: [110, 70], Goto: [70, 30], From: [70, 30], MultiportSwitch: [50, 80], Display: [90, 34], Terminator: [30, 30],
     };
     const [w, h] = size[type] ?? [70, 50];
     const m = this.level;
@@ -464,7 +468,7 @@ export class ModelEditor {
       params: Object.fromEntries(def.params.map((p) => [p.name, p.default])),
     };
     if (type === "Inport" || type === "Outport") b.params.port = String(m.blocks.filter((o) => o.type === type).length + 1);
-    if (type === "Subsystem") {
+    if (type === "Subsystem" || type === "EnabledSubsystem") {
       b.system = {
         version: 1, name: b.name, solver: defaultSolver(),
         blocks: [
@@ -665,7 +669,7 @@ export class ModelEditor {
     const menu = document.createElement("div");
     menu.className = "menu";
     const items: [string, () => void][] = [
-      [b.type === "Subsystem" ? "Open subsystem" : "Parameters…", () => this.openBlock(b)],
+      [(b.type === "Subsystem" || b.type === "EnabledSubsystem") ? "Open subsystem" : "Parameters…", () => this.openBlock(b)],
       ["Rename…", () => { const n = prompt("Block name", b.name); if (n && n.trim()) { this.snapshot(); b.name = n.trim(); this.changed(); } }],
       ["Delete", () => { this.selection = new Set([b.id]); this.deleteSelection(); }],
     ];
@@ -684,7 +688,7 @@ export class ModelEditor {
   }
 
   private openBlock(b: BlockSpec) {
-    if (b.type === "Subsystem") {
+    if ((b.type === "Subsystem" || b.type === "EnabledSubsystem")) {
       this.stack.push(b.id);
       this.selection.clear();
       this.selLine = null;
@@ -770,7 +774,9 @@ function shapeMarkup(b: BlockSpec): string {
     case "Sum": return `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" class="bs"/>`;
     case "Mux": case "Demux": return `<rect width="${w}" height="${h}" class="bs bar"/>`;
     case "Inport": case "Outport": return `<rect width="${w}" height="${h}" rx="${h / 2}" class="bs port"/>`;
-    case "Subsystem": return `<rect width="${w}" height="${h}" rx="4" class="bs sub"/>`;
+    case "Subsystem": case "EnabledSubsystem": return `<rect width="${w}" height="${h}" rx="4" class="bs sub"/>`;
+    case "Goto": return `<path d="M0,0 H${w - 12} L${w},${h / 2} L${w - 12},${h} H0 z" class="bs port"/>`;
+    case "From": return `<path d="M12,0 H${w} V${h} H12 L0,${h / 2} z" class="bs port"/>`;
     default: return `<rect width="${w}" height="${h}" rx="4" class="bs"/>`;
   }
 }

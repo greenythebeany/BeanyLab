@@ -254,13 +254,94 @@ fn get_param_and_sim_options() {
 }
 
 #[test]
+fn enabled_subsystem_goto_from_and_multiport_switch() {
+    // Integrator inside an enabled subsystem counts time only while the pulse is high
+    // (first half of every 2 s period); Goto/From and a Multiport Switch route it to the log.
+    let it = run("enabled_counter");
+    let (t, y) = (field(&it, "tout"), field(&it, "on_time"));
+    for (tt, exact) in [(0.5, 0.5), (1.5, 1.0), (2.5, 1.5), (3.5, 2.0), (4.0, 2.0)] {
+        let got = at(&t, &y, tt);
+        assert!(
+            (got - exact).abs() < 2e-2,
+            "t={} got {} expected {}",
+            tt,
+            got,
+            exact
+        );
+    }
+}
+
+#[test]
+fn scope_with_one_axes_per_input() {
+    let mut it = Interp::new();
+    it.cwd = models_dir();
+    it.eval_string("load_system('van_der_pol'); set_param('van_der_pol/Oscillator', 'layout', 'one per input'); sim('van_der_pol');").unwrap();
+    let fig = it
+        .graphics
+        .figures
+        .iter()
+        .find(|f| f.name.as_deref() == Some("Oscillator"))
+        .expect("scope figure");
+    assert_eq!(fig.axes.len(), 2);
+    assert_eq!(fig.axes[1].grid, (2, 1));
+}
+
+#[test]
+fn models_built_from_a_script() {
+    let dir = std::env::temp_dir().join(format!("beany_simapi_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut it = Interp::new();
+    it.cwd = dir.clone();
+    let r = it.eval_string(
+        "new_system('lag');\n\
+         add_block('beany/Sources/Step', 'lag/In', 'time', 0);\n\
+         add_block('beany/Continuous/Transfer Fcn', 'lag/G', 'den', '[2 1]');\n\
+         add_block('ToWorkspace', 'lag/Log', 'variable', 'y');\n\
+         add_line('lag', 'In/1', 'G/1');\n\
+         add_line('lag', 'G/1', 'Log/1');\n\
+         set_param('lag', 'StopTime', '4');\n\
+         o = sim('lag');\n\
+         save_system('lag');\n\
+         close_system('lag');\n\
+         o2 = sim('lag');",
+    );
+    let saved = dir.join("lag.bmdl").is_file();
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(e) = r {
+        panic!("{}", e.report());
+    }
+    assert!(saved);
+    for var in ["o", "o2"] {
+        let Some(Value::Struct(s)) = it.get_var(var) else {
+            panic!()
+        };
+        let t = s.get(0, "tout").unwrap().to_num().unwrap().data;
+        let y = s.get(0, "y").unwrap().to_num().unwrap().data;
+        // 1/(2s+1): y(4) = 1 - e^-2.
+        assert!((t.last().unwrap() - 4.0).abs() < 1e-9);
+        assert!(
+            (y.last().unwrap() - (1.0 - (-2.0f64).exp())).abs() < 2e-3,
+            "{}",
+            y.last().unwrap()
+        );
+    }
+}
+
+#[test]
 fn every_library_block_runs() {
     // Each block type wired with default parameters into a small model must simulate.
     let lib = beany_core::sim::blocks::library();
     for def in lib.iter().filter(|d| {
         !matches!(
             d.kind,
-            "Subsystem" | "Inport" | "StopSimulation" | "UserFunction" | "FromWorkspace"
+            // Covered by their own models: these need contents, a partner block or a file.
+            "Subsystem"
+                | "EnabledSubsystem"
+                | "Inport"
+                | "StopSimulation"
+                | "UserFunction"
+                | "FromWorkspace"
+                | "From"
         )
     }) {
         let (ni, no) = beany_core::sim::blocks::ports_for(def.kind, &Default::default(), None);

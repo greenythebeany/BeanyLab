@@ -2,6 +2,7 @@
 
 pub mod blocks;
 pub mod model;
+pub mod ode;
 pub mod run;
 mod solver;
 
@@ -23,12 +24,46 @@ struct FlatBlock {
     name: String,
     kind: String,
     params: BTreeMap<String, String>,
+    /// Inside an enabled subsystem: the flat block carrying its enable signal.
+    enable: Option<usize>,
 }
 
 struct Flat {
     blocks: Vec<FlatBlock>,
     /// (src block, src port 0-based) -> (dst block, dst port 0-based)
     lines: Vec<((usize, usize), (usize, usize))>,
+}
+
+pub fn is_subsystem(kind: &str) -> bool {
+    kind == "Subsystem" || kind == "EnabledSubsystem"
+}
+
+/// Connect every From block to the Goto block with the same tag.
+fn wire_goto_from(flat: &mut Flat) -> Result<(), SimError> {
+    let tag = |b: &FlatBlock| b.params.get("tag").cloned().unwrap_or_else(|| "A".into());
+    let mut gotos: BTreeMap<String, usize> = BTreeMap::new();
+    for (i, b) in flat.blocks.iter().enumerate() {
+        if b.kind == "Goto" && gotos.insert(tag(b), i).is_some() {
+            return Err(SimError {
+                message: format!(
+                    "{}: another Goto block already uses tag '{}'.",
+                    b.name,
+                    tag(b)
+                ),
+                block: Some(b.id.clone()),
+            });
+        }
+    }
+    for (i, b) in flat.blocks.iter().enumerate() {
+        if b.kind == "From" {
+            let g = *gotos.get(&tag(b)).ok_or_else(|| SimError {
+                message: format!("{}: no Goto block has tag '{}'.", b.name, tag(b)),
+                block: Some(b.id.clone()),
+            })?;
+            flat.lines.push(((g, 0), (i, 0)));
+        }
+    }
+    Ok(())
 }
 
 /// Inport/Outport counts of a subsystem's contents.
@@ -51,6 +86,7 @@ fn flatten(
     id_prefix: &str,
     name_prefix: &str,
     top: bool,
+    enable: Option<usize>,
     flat: &mut Flat,
 ) -> SimResult<BTreeMap<String, (Vec<usize>, Vec<usize>)>> {
     let mut ports: BTreeMap<String, (Vec<usize>, Vec<usize>)> = BTreeMap::new();
@@ -61,7 +97,22 @@ fn flatten(
             name_prefix,
             if b.name.is_empty() { &b.kind } else { &b.name }
         );
-        if b.kind == "Subsystem" {
+        if is_subsystem(&b.kind) {
+            // An enabled subsystem routes its enable input through a pass block that
+            // every block inside consults.
+            let inner_enable = if b.kind == "EnabledSubsystem" {
+                let idx = flat.blocks.len();
+                flat.blocks.push(FlatBlock {
+                    id: format!("{}/__enable", id),
+                    name: format!("{}/enable", name),
+                    kind: "Pass".into(),
+                    params: BTreeMap::new(),
+                    enable,
+                });
+                Some(idx)
+            } else {
+                enable
+            };
             let sys = b.system.as_deref().cloned().unwrap_or(Model {
                 version: 1,
                 name: String::new(),
@@ -74,6 +125,7 @@ fn flatten(
                 &format!("{}/", id),
                 &format!("{}/", name),
                 false,
+                inner_enable,
                 flat,
             )?;
             // Subsystem port k maps to the Inport/Outport block with port number k inside.
@@ -90,12 +142,13 @@ fn flatten(
             }
             ins.sort();
             outs.sort();
+            let mut in_idx: Vec<usize> = ins.into_iter().map(|p| p.1).collect();
+            if b.kind == "EnabledSubsystem" {
+                in_idx.push(inner_enable.unwrap());
+            }
             ports.insert(
                 b.id.clone(),
-                (
-                    ins.into_iter().map(|p| p.1).collect(),
-                    outs.into_iter().map(|p| p.1).collect(),
-                ),
+                (in_idx, outs.into_iter().map(|p| p.1).collect()),
             );
             continue;
         }
@@ -111,6 +164,7 @@ fn flatten(
             name,
             kind,
             params: b.params.clone(),
+            enable,
         });
         ports.insert(b.id.clone(), (vec![idx], vec![idx]));
     }
@@ -124,11 +178,11 @@ fn flatten(
         let src_is_sub = m
             .blocks
             .iter()
-            .any(|b| b.id == l.src.block && b.kind == "Subsystem");
+            .any(|b| b.id == l.src.block && is_subsystem(&b.kind));
         let dst_is_sub = m
             .blocks
             .iter()
-            .any(|b| b.id == l.dst.block && b.kind == "Subsystem");
+            .any(|b| b.id == l.dst.block && is_subsystem(&b.kind));
         let (s, sp) = if src_is_sub {
             (
                 *src.1
@@ -197,6 +251,8 @@ struct Engine {
     samples: Vec<Sample>,
     constant_done: Vec<bool>,
     zc_map: Vec<(usize, usize)>,
+    /// Enable-signal block for blocks inside enabled subsystems.
+    enable: Vec<Option<usize>>,
 }
 
 const EPS: f64 = 1e-10;
@@ -222,6 +278,20 @@ fn next_hit(s: Sample, t: f64) -> Option<f64> {
 }
 
 impl Engine {
+    /// False while an enclosing enabled subsystem's enable input is not positive.
+    fn enabled(&self, b: usize) -> bool {
+        match self.enable[b] {
+            None => true,
+            Some(e) => {
+                self.outputs[e]
+                    .first()
+                    .and_then(|v| v.first())
+                    .is_some_and(|x| *x > 0.0)
+                    && self.enabled(e)
+            }
+        }
+    }
+
     fn inputs_of(&self, b: usize) -> Vec<Vec<f64>> {
         self.inputs[b]
             .iter()
@@ -248,6 +318,10 @@ impl Engine {
                 Sample::Discrete { .. } if !(major && is_hit(self.samples[b], t)) => continue,
                 Sample::Constant if self.constant_done[b] => continue,
                 _ => {}
+            }
+            // Disabled blocks hold their last output.
+            if !self.enabled(b) {
+                continue;
             }
             let u = self.inputs_of(b);
             let xs = &x[self.xoff[b]..self.xoff[b] + self.blocks[b].nstates()];
@@ -276,7 +350,8 @@ impl Engine {
         let mut dx = vec![0.0; self.nx];
         for b in 0..self.blocks.len() {
             let n = self.blocks[b].nstates();
-            if n == 0 {
+            // Disabled blocks keep their states frozen.
+            if n == 0 || !self.enabled(b) {
                 continue;
             }
             let u = self.inputs_of(b);
@@ -411,7 +486,8 @@ pub fn simulate(
         blocks: Vec::new(),
         lines: Vec::new(),
     };
-    flatten(model, "", "", true, &mut flat)?;
+    flatten(model, "", "", true, None, &mut flat)?;
+    wire_goto_from(&mut flat)?;
     let defs = blocks::library();
     let mut warnings = Vec::new();
 
@@ -496,7 +572,7 @@ pub fn simulate(
     }
     for (b, ins) in inputs.iter().enumerate() {
         for (p, src) in ins.iter().enumerate() {
-            if src.is_none() && flat.blocks[b].kind != "Inport" {
+            if src.is_none() && flat.blocks[b].kind != "Inport" && flat.blocks[b].kind != "Pass" {
                 warnings.push(format!(
                     "{}: input port {} is not connected; it reads 0.",
                     flat.blocks[b].name,
@@ -517,6 +593,13 @@ pub fn simulate(
                     succ[*s].push(d);
                 }
             }
+        }
+    }
+    // Blocks in an enabled subsystem run after their enable signal is known.
+    for (b, fb) in flat.blocks.iter().enumerate() {
+        if let Some(e) = fb.enable {
+            indeg[b] += 1;
+            succ[e].push(b);
         }
     }
     let mut order = Vec::with_capacity(n);
@@ -567,6 +650,7 @@ pub fn simulate(
         samples,
         constant_done: vec![false; n],
         zc_map: Vec::new(),
+        enable: flat.blocks.iter().map(|b| b.enable).collect(),
     };
 
     // Solver settings.
@@ -681,7 +765,7 @@ pub fn simulate(
                 Sample::Continuous => true,
                 Sample::Constant => false,
             };
-            if upd {
+            if upd && eng.enabled(b) {
                 let u = eng.inputs_of(b);
                 let k = eng.blocks[b].nstates();
                 let o = eng.xoff[b];
