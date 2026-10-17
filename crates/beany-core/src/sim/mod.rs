@@ -559,7 +559,9 @@ pub fn simulate(
 
     // Build runtime blocks with evaluated parameters.
     let mut rblocks: Vec<Box<dyn Block>> = Vec::with_capacity(flat.blocks.len());
-    for fb in &flat.blocks {
+    // Sample-time offsets from `ts = [period offset]`.
+    let mut offsets: Vec<f64> = vec![0.0; flat.blocks.len()];
+    for (bi, fb) in flat.blocks.iter().enumerate() {
         let def_kind = if fb.kind == "Pass" {
             "Inport"
         } else {
@@ -580,6 +582,23 @@ pub fn simulate(
                         message: m,
                         block: Some(fb.id.clone()),
                     })?;
+                    let v = match (pd.name, v.to_num()) {
+                        ("ts", Ok(a)) if a.data.len() == 2 => {
+                            let (period, offset) = (a.data[0], a.data[1]);
+                            if !(0.0..period).contains(&offset) {
+                                return Err(SimError {
+                                    message: format!(
+                                        "{}: the sample time offset must be at least 0 and less than the period.",
+                                        fb.name
+                                    ),
+                                    block: Some(fb.id.clone()),
+                                });
+                            }
+                            offsets[bi] = offset;
+                            Value::num(period)
+                        }
+                        (_, _) => v,
+                    };
                     values.insert(pd.name.to_string(), v);
                 } else {
                     texts.insert(pd.name.to_string(), raw);
@@ -706,7 +725,17 @@ pub fn simulate(
         xoff[b] = nx;
         nx += rblocks[b].nstates();
     }
-    let samples: Vec<Sample> = rblocks.iter().map(|b| b.sample()).collect();
+    let samples: Vec<Sample> = rblocks
+        .iter()
+        .zip(&offsets)
+        .map(|(b, &o)| match b.sample() {
+            Sample::Discrete { period, offset } => Sample::Discrete {
+                period,
+                offset: offset + o,
+            },
+            s => s,
+        })
+        .collect();
     let mut eng = Engine {
         outputs: rblocks
             .iter()

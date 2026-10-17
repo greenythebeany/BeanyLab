@@ -215,7 +215,7 @@ pub fn library() -> Vec<BlockDef> {
                 p("mean", "Mean", "0"),
                 p("variance", "Variance", "1"),
                 p("seed", "Seed", "0"),
-                p("ts", "Sample time", "0.1"),
+                p("ts", "Sample time (period or [period offset])", "0.1"),
             ],
         ),
         // Sinks
@@ -416,7 +416,7 @@ pub fn library() -> Vec<BlockDef> {
             "Holds the input for one sample period.",
             vec![
                 p("initial", "Initial condition", "0"),
-                p("ts", "Sample time", "1"),
+                p("ts", "Sample time (period or [period offset])", "1"),
             ],
         ),
         d(
@@ -426,7 +426,7 @@ pub fn library() -> Vec<BlockDef> {
             vec![
                 p("num", "Numerator", "[1]"),
                 p("den", "Denominator", "[1 0.5]"),
-                p("ts", "Sample time", "1"),
+                p("ts", "Sample time (period or [period offset])", "1"),
             ],
         ),
         d(
@@ -439,7 +439,7 @@ pub fn library() -> Vec<BlockDef> {
                 p("C", "C", "1"),
                 p("D", "D", "0"),
                 p("x0", "Initial state", "0"),
-                p("ts", "Sample time", "1"),
+                p("ts", "Sample time (period or [period offset])", "1"),
             ],
         ),
         d(
@@ -449,14 +449,14 @@ pub fn library() -> Vec<BlockDef> {
             vec![
                 p("gain", "Gain K", "1"),
                 p("initial", "Initial condition", "0"),
-                p("ts", "Sample time", "1"),
+                p("ts", "Sample time (period or [period offset])", "1"),
             ],
         ),
         d(
             "ZeroOrderHold",
             "Discrete",
             "Samples and holds the input.",
-            vec![p("ts", "Sample time", "1")],
+            vec![p("ts", "Sample time (period or [period offset])", "1")],
         ),
         d(
             "DiscretePID",
@@ -466,7 +466,7 @@ pub fn library() -> Vec<BlockDef> {
                 p("P", "Proportional (P)", "1"),
                 p("I", "Integral (I)", "1"),
                 p("D", "Derivative (D)", "0"),
-                p("ts", "Sample time", "0.1"),
+                p("ts", "Sample time (period or [period offset])", "0.1"),
             ],
         ),
         // Nonlinear

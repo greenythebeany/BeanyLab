@@ -466,3 +466,38 @@ fn bus_selector_picks_elements_by_name() {
         .unwrap_err();
     assert!(e.report().contains("no element 'nope'"), "{}", e.report());
 }
+
+#[test]
+fn sample_time_offset_shifts_the_hits() {
+    let mut it = Interp::new();
+    it.eval_string(
+        "new_system('off');\n\
+         add_block('Clock', 'off/T');\n\
+         add_block('ZeroOrderHold', 'off/H', 'ts', '[1 0.5]');\n\
+         add_block('ToWorkspace', 'off/L', 'variable', 'y');\n\
+         add_line('off', 'T/1', 'H/1');\n\
+         add_line('off', 'H/1', 'L/1');\n\
+         set_param('off', 'StopTime', '4');\n\
+         o = sim('off');",
+    )
+    .unwrap_or_else(|e| panic!("{}", e.report()));
+    let Some(Value::Struct(s)) = it.get_var("o") else {
+        panic!()
+    };
+    let t = s.get(0, "tout").unwrap().to_num().unwrap().data;
+    let y = s.get(0, "y").unwrap().to_num().unwrap().data;
+    assert!(t.iter().any(|v| (v - 2.5).abs() < 1e-9), "{:?}", t);
+    for (tt, yy) in t.iter().zip(&y) {
+        if *tt >= 0.5 {
+            assert!(
+                (yy - ((tt - 0.5 + 1e-9).floor() + 0.5)).abs() < 1e-9,
+                "t={} y={}",
+                tt,
+                yy
+            );
+        }
+    }
+    assert!(it
+        .eval_string("set_param('off/H', 'ts', '[1 2]'); sim('off');")
+        .is_err());
+}

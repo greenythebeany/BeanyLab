@@ -88,7 +88,7 @@ Because the language milestones now come later, the simulator only uses language
   - [x] Document the format in `docs/model-format.md`.
 - [x] **Execution order:** sort blocks by data dependency, detect algebraic loops and report only the blocks on the loop. Signal widths flow dynamically.
 - [x] **Sample times:** continuous, discrete (per-block period), inherited, and constant.
-  - [ ] Per-block sample-time offsets in the dialogs.
+  - [x] Per-block sample-time offsets: `ts = [period offset]` in the dialogs.
 - [x] **Solvers:**
   - Fixed step: Euler (ode1), Heun (ode2), RK4 (ode4).
   - Variable step: Dormand–Prince 5(4) (ode45) and Bogacki–Shampine 3(2) (ode23), with relative and absolute tolerances.
