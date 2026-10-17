@@ -559,6 +559,11 @@ editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.E
 editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveActive(false));
 editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, () => editorAction("editor.action.addCommentLine"));
 editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyT, () => editorAction("editor.action.removeCommentLine"));
+editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyI, () => editorAction("editor.action.reindentselectedlines"));
+editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.UpArrow, () => jumpSection(-1));
+editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.DownArrow, () => jumpSection(1));
+editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD, () => openWord(wordAtCursor()));
+editor.addCommand(monaco.KeyCode.F1, () => helpWord(wordAtCursor()));
 editor.addCommand(monaco.KeyCode.F9, () => {
   const sel = editor.getModel()?.getValueInRange(editor.getSelection()!);
   if (sel?.trim()) { addHistory(sel); execute(sel, true); }
@@ -579,6 +584,67 @@ function decorateSections() {
 const sectionStyle = document.createElement("style");
 sectionStyle.textContent = `.section-line { border-top: 1px solid #94A3B8; }`;
 document.head.appendChild(sectionStyle);
+
+/** The selection, or the identifier under the cursor. */
+function wordAtCursor(): string {
+  const m = editor.getModel();
+  const sel = editor.getSelection();
+  if (!m || !sel) return "";
+  const text = m.getValueInRange(sel).trim();
+  if (text) return text;
+  return m.getWordAtPosition(sel.getPosition())?.word ?? "";
+}
+
+/** Ctrl+Up / Ctrl+Down: move to the previous or next %% section. */
+function jumpSection(dir: number) {
+  const m = editor.getModel();
+  const pos = editor.getPosition();
+  if (!m || !pos) return;
+  for (let i = pos.lineNumber + dir; i >= 1 && i <= m.getLineCount(); i += dir) {
+    if (/^\s*%%/.test(m.getLineContent(i))) {
+      editor.setPosition({ lineNumber: i, column: 1 });
+      editor.revealLineInCenter(i);
+      return;
+    }
+  }
+}
+
+function helpWord(w: string) {
+  if (!/^[A-Za-z]\w*$/.test(w)) { showHelp(); return; }
+  execute(`help ${w}`, true);
+}
+
+/** Ctrl+D: open the file that defines the name under the cursor. */
+async function openWord(w: string) {
+  if (!/^[A-Za-z][\w.]*$/.test(w)) return;
+  try {
+    const where: EvalResult = await call<EvalResult>("eval", { code: `which ${w}` });
+    const path = where.output.trim().split("\n")[0];
+    if (/\.(m|slx|mdl|bmdl)$/i.test(path)) openPath(path);
+    else toast(`No file defines '${w}'.`);
+  } catch {
+    toast(`No file defines '${w}'.`);
+  }
+}
+
+function focusPane(which: "command" | "editor" | "history" | "files" | "workspace") {
+  if (which === "command") { input.focus(); return; }
+  if (which === "editor") {
+    if (activeTab?.kind === "code") editor.focus();
+    else if (activeTab?.kind === "model") activeTab.me!.focus();
+    return;
+  }
+  const id = which === "history" ? "history-list" : which === "files" ? "file-list" : "pane-workspace";
+  const el = $(id);
+  if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "0");
+  el.focus();
+}
+
+function cycleTab(dir: number) {
+  if (tabs.length < 2 || !activeTab) return;
+  const i = tabs.indexOf(activeTab);
+  activate(tabs[(i + dir + tabs.length) % tabs.length]);
+}
 
 function editorAction(id: string) {
   if (activeTab?.kind !== "code") return;
@@ -1228,8 +1294,16 @@ function showHelp() {
   appendText(
     [
       "BeanyLab — quick help",
-      "  Command Window:  Enter runs · Shift+Enter new line · ↑/↓ history · Tab completes · Ctrl+C stops",
-      "  Editor:          F5 run file · Ctrl+Enter run section · F9 run selection · Ctrl+S save · Ctrl+R/T comment",
+      "  Desktop:         Ctrl+N new script · Ctrl+Shift+N new model · Ctrl+O open · Ctrl+S save · Ctrl+Shift+S save as",
+      "                   Ctrl+W close · Ctrl+Tab next document · Ctrl+0 Command Window · Ctrl+Shift+0 Editor",
+      "                   Ctrl+1 History · Ctrl+2 Current Folder · Ctrl+3 Workspace · F1 help on the word at the cursor",
+      "  Command Window:  Enter runs · Shift+Enter new line · ↑/↓ history · Tab completes · Esc clears · Ctrl+C stops",
+      "  Editor:          F5 run file · Ctrl+Enter run section · Ctrl+Shift+Enter run and advance · F9 run selection",
+      "                   Ctrl+R comment · Ctrl+T uncomment · Ctrl+/ toggle comment · Ctrl+I smart indent · Ctrl+] / Ctrl+[ indent",
+      "                   Ctrl+↑/↓ previous/next section · Ctrl+D open the function at the cursor · Ctrl+F find · Ctrl+H replace · Ctrl+G go to line",
+      "  Model editor:    Ctrl+T or F5 run · Space fit · Ctrl+= / Ctrl+- zoom · Alt+1 actual size · double-click empty canvas to add a block",
+      "                   Ctrl+G group into subsystem · Ctrl+U open subsystem · Esc go up · Ctrl+E solver settings · Ctrl+D update diagram",
+      "                   Ctrl+L block library · Ctrl+F find block · F2 rename · arrow keys move · Ctrl+C/X/V/Z/Y/A · Delete",
       "  Sections:        start a line with %% to split a script into runnable sections",
       "  help name        shows the leading comment block of name.m",
       "  which name / exist name / who / whos / clc / clear / format long|short",
@@ -1281,10 +1355,30 @@ function sameDir(a: string, b: string) { return norm(a) === norm(b); }
 
 // ---------------------------------------------------------------- global keys + wiring
 document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") { e.preventDefault(); newScript(); }
-  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); openFileDialog(); }
+  const ctrl = e.ctrlKey || e.metaKey;
+  const k = e.key.toLowerCase();
+  // Model windows only keep the keys that make sense there.
+  if (modelWindow) {
+    if (ctrl && k === "s") { e.preventDefault(); saveActive(e.shiftKey); }
+    else if (e.key === "F5") { e.preventDefault(); runActive(); }
+    else if (ctrl && k === "w") { e.preventDefault(); window.close(); }
+    return;
+  }
+  if (ctrl && !e.shiftKey && k === "n") { e.preventDefault(); newScript(); }
+  else if (ctrl && e.shiftKey && k === "n") { e.preventDefault(); newModel(); }
+  else if (ctrl && k === "o") { e.preventDefault(); openFileDialog(); }
+  else if (ctrl && k === "s" && (activeTab?.kind === "model" || e.shiftKey)) { e.preventDefault(); saveActive(e.shiftKey); }
   else if (e.key === "F5" && (activeTab?.kind === "code" || activeTab?.kind === "model")) { e.preventDefault(); runActive(); }
-  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s" && activeTab?.kind === "model") { e.preventDefault(); saveActive(false); }
+  else if ((ctrl && k === "w") || (ctrl && e.key === "F4")) { if (activeTab) { e.preventDefault(); closeTab(activeTab); } }
+  else if (ctrl && (e.key === "Tab" || e.key === "PageDown")) { e.preventDefault(); cycleTab(e.shiftKey && e.key === "Tab" ? -1 : 1); }
+  else if (ctrl && e.key === "PageUp") { e.preventDefault(); cycleTab(-1); }
+  else if (ctrl && e.shiftKey && (e.key === "0" || e.code === "Digit0")) { e.preventDefault(); focusPane("editor"); }
+  else if (ctrl && e.key === "0") { e.preventDefault(); focusPane("command"); }
+  else if (ctrl && e.key === "1") { e.preventDefault(); focusPane("history"); }
+  else if (ctrl && e.key === "2") { e.preventDefault(); focusPane("files"); }
+  else if (ctrl && e.key === "3") { e.preventDefault(); focusPane("workspace"); }
+  else if (e.key === "F1" && document.activeElement === input) { e.preventDefault(); helpWord(input.value.trim().split(/[\s(]/)[0] ?? ""); }
+  else if (e.key === "F1") { e.preventDefault(); showHelp(); }
 });
 window.addEventListener("beforeunload", (e) => {
   if (tabs.some(isDirty)) { e.preventDefault(); }

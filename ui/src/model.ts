@@ -693,7 +693,108 @@ export class ModelEditor {
     else if (ctrl && e.key.toLowerCase() === "a") { e.preventDefault(); this.selection = new Set(this.level.blocks.map((b) => b.id)); this.render(); }
     else if (ctrl && e.key.toLowerCase() === "t") { e.preventDefault(); this.host.run(); }
     else if (e.key === " " && !ctrl) { e.preventDefault(); this.fit(); }
+    else if (ctrl && e.key.toLowerCase() === "x") { e.preventDefault(); this.copy(); this.deleteSelection(); }
+    else if (ctrl && e.key.toLowerCase() === "g") { e.preventDefault(); this.groupSelection(); }
+    else if (ctrl && e.key.toLowerCase() === "u") { e.preventDefault(); const b = this.selectedBlock(); if (b) this.openBlock(b); }
+    else if (ctrl && e.key.toLowerCase() === "e") { e.preventDefault(); this.solverDialog(); }
+    else if (ctrl && e.key.toLowerCase() === "d") { e.preventDefault(); this.refreshPorts().then(() => { this.render(); this.host.toast("Diagram updated."); }); }
+    else if (ctrl && e.key.toLowerCase() === "l") { e.preventDefault(); (this.wrap.querySelector(".me-search") as HTMLInputElement).focus(); }
+    else if (ctrl && e.key.toLowerCase() === "f") { e.preventDefault(); this.findBlock(); }
+    else if (ctrl && (e.key === "=" || e.key === "+")) { e.preventDefault(); this.zoomBy(1.2); }
+    else if (ctrl && e.key === "-") { e.preventDefault(); this.zoomBy(1 / 1.2); }
+    else if (e.altKey && e.key === "1") { e.preventDefault(); this.zoomBy(1 / this.view.k); }
+    else if (e.key === "F2") { e.preventDefault(); const b = this.selectedBlock(); if (b) this.rename(b); }
+    else if (e.key.startsWith("Arrow") && this.selection.size && !ctrl) {
+      e.preventDefault();
+      const step = e.shiftKey ? 1 : 10;
+      const [dx, dy] = e.key === "ArrowLeft" ? [-step, 0] : e.key === "ArrowRight" ? [step, 0] : e.key === "ArrowUp" ? [0, -step] : [0, step];
+      this.snapshot();
+      for (const b of this.level.blocks) if (this.selection.has(b.id)) { b.x += dx; b.y += dy; }
+      this.changed();
+    }
     else if (e.key === "Escape" && this.stack.length) { this.stack.pop(); this.selection.clear(); this.fit(); }
+  }
+
+  private selectedBlock(): BlockSpec | undefined {
+    return this.level.blocks.find((b) => this.selection.has(b.id));
+  }
+
+  private rename(b: BlockSpec) {
+    const n = prompt("Block name", b.name);
+    if (n && n.trim() && n.trim() !== b.name) {
+      this.snapshot();
+      b.name = this.uniqueName(n.trim());
+      this.changed();
+    }
+  }
+
+  private zoomBy(f: number) {
+    const W = this.svg.clientWidth / 2;
+    const H = this.svg.clientHeight / 2;
+    const k = Math.min(4, Math.max(0.2, this.view.k * f));
+    this.view.x = W - ((W - this.view.x) * k) / this.view.k;
+    this.view.y = H - ((H - this.view.y) * k) / this.view.k;
+    this.view.k = k;
+    this.applyView();
+  }
+
+  /** Ctrl+F: select the blocks whose name or type contains the text. */
+  private findBlock() {
+    const q = prompt("Find blocks by name or type");
+    if (!q) return;
+    const t = q.toLowerCase();
+    const hits = this.level.blocks.filter((b) => b.name.toLowerCase().includes(t) || b.type.toLowerCase().includes(t));
+    this.selection = new Set(hits.map((b) => b.id));
+    this.render();
+    this.host.toast(hits.length ? `${hits.length} block(s) found.` : `No block matches '${q}'.`);
+  }
+
+  /** Ctrl+G: move the selected blocks into a new subsystem, keeping their connections. */
+  private async groupSelection() {
+    const m = this.level;
+    const sel = m.blocks.filter((b) => this.selection.has(b.id));
+    if (!sel.length) return;
+    this.snapshot();
+    const ids = new Set(sel.map((b) => b.id));
+    const key = (p: PortRef) => `${p.block}:${p.port}`;
+    const inside = m.lines.filter((l) => ids.has(l.src.block) && ids.has(l.dst.block));
+    const incoming = m.lines.filter((l) => !ids.has(l.src.block) && ids.has(l.dst.block));
+    const outgoing = m.lines.filter((l) => ids.has(l.src.block) && !ids.has(l.dst.block));
+    const x0 = Math.min(...sel.map((b) => b.x)), y0 = Math.min(...sel.map((b) => b.y));
+    const x1 = Math.max(...sel.map((b) => b.x + b.w)), y1 = Math.max(...sel.map((b) => b.y + b.h));
+    const blocks: BlockSpec[] = sel.map((b) => ({ ...b, x: b.x - x0 + 140, y: b.y - y0 + 60 }));
+    const lines: Line[] = inside.map((l) => ({ src: { ...l.src }, dst: { ...l.dst } }));
+    const subId = newId("b");
+    const outer: Line[] = [];
+    // One Inport per distinct outside signal, one Outport per distinct inside signal.
+    const ins = [...new Map(incoming.map((l) => [key(l.src), l.src])).values()];
+    ins.forEach((src, i) => {
+      const id = newId("b");
+      blocks.push({ id, type: "Inport", name: `In${i + 1}`, x: 20, y: 60 + i * 60, w: 40, h: 26, params: { port: String(i + 1) } });
+      outer.push({ src: { ...src }, dst: { block: subId, port: i + 1 } });
+      for (const l of incoming.filter((l) => key(l.src) === key(src))) lines.push({ src: { block: id, port: 1 }, dst: { ...l.dst } });
+    });
+    const outs = [...new Map(outgoing.map((l) => [key(l.src), l.src])).values()];
+    outs.forEach((src, i) => {
+      const id = newId("b");
+      blocks.push({ id, type: "Outport", name: `Out${i + 1}`, x: x1 - x0 + 260, y: 60 + i * 60, w: 40, h: 26, params: { port: String(i + 1) } });
+      lines.push({ src: { ...src }, dst: { block: id, port: 1 } });
+      for (const l of outgoing.filter((l) => key(l.src) === key(src))) outer.push({ src: { block: subId, port: i + 1 }, dst: { ...l.dst } });
+    });
+    const n = Math.max(ins.length, outs.length, 1);
+    const sub: BlockSpec = {
+      id: subId, type: "Subsystem", name: this.uniqueName("Subsystem"),
+      x: snap((x0 + x1) / 2 - 55), y: snap((y0 + y1) / 2 - Math.max(35, n * 15)), w: 110, h: Math.max(70, n * 30),
+      params: {},
+      system: { version: 1, name: "Subsystem", solver: defaultSolver(), blocks, lines },
+    };
+    m.blocks = m.blocks.filter((b) => !ids.has(b.id));
+    m.blocks.push(sub);
+    m.lines = m.lines.filter((l) => !ids.has(l.src.block) && !ids.has(l.dst.block)).concat(outer);
+    this.selection = new Set([subId]);
+    this.selLine = null;
+    await this.refreshPorts();
+    this.changed();
   }
 
   /** Double click on empty canvas: type to find a block and drop it there. */
