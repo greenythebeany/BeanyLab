@@ -176,7 +176,7 @@ export async function pickFolder(current: string): Promise<string | null> {
 export async function pickOpenFile(current: string): Promise<string | null> {
   if (tauri) {
     const d = await import("@tauri-apps/plugin-dialog");
-    const r = await d.open({ defaultPath: current, filters: [{ name: "Code files", extensions: ["m"] }, { name: "All files", extensions: ["*"] }] });
+    const r = await d.open({ defaultPath: current, filters: [{ name: "Code and model files", extensions: ["m", "bmdl"] }, { name: "All files", extensions: ["*"] }] });
     return typeof r === "string" ? r : null;
   }
   return window.prompt("File path", current);
@@ -185,7 +185,7 @@ export async function pickOpenFile(current: string): Promise<string | null> {
 export async function pickSaveFile(suggested: string): Promise<string | null> {
   if (tauri) {
     const d = await import("@tauri-apps/plugin-dialog");
-    const r = await d.save({ defaultPath: suggested, filters: [{ name: "Code files", extensions: ["m"] }] });
+    const r = await d.save({ defaultPath: suggested, filters: /.bmdl$/i.test(suggested) ? [{ name: "Model files", extensions: ["bmdl"] }] : [{ name: "Code files", extensions: ["m"] }] });
     return r ?? null;
   }
   return window.prompt("Save as", suggested);
