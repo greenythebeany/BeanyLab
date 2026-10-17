@@ -1,4 +1,4 @@
-//! `ode45`, `ode23` and `odeset`, built on the simulator's adaptive solvers.
+//! `ode45`, `ode23`, the stiff `ode23s`/`ode15s` and `odeset`, built on the simulator's adaptive solvers.
 
 use super::solver::{self, Method, System};
 use super::SimError;
@@ -223,6 +223,12 @@ pub fn register(it: &mut Interp) {
     let b = &mut it.builtins;
     b.insert("ode45", |it, a, n| solve(it, a, n, Method::Ode45, "ode45"));
     b.insert("ode23", |it, a, n| solve(it, a, n, Method::Ode23, "ode23"));
+    b.insert("ode23s", |it, a, n| {
+        solve(it, a, n, Method::Ode23s, "ode23s")
+    });
+    b.insert("ode15s", |it, a, n| {
+        solve(it, a, n, Method::Ode23s, "ode15s")
+    });
     b.insert("odeset", |_, a, _| {
         let mut fields = Vec::new();
         for pair in a.chunks(2) {

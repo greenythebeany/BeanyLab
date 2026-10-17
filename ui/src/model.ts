@@ -194,7 +194,7 @@ export class ModelEditor {
         <label class="me-field">Stop time <input data-s="stop_time" size="6"></label>
         <label class="me-field">Solver
           <select data-s="solver">
-            <option value="auto">auto</option><option value="ode45">ode45 (variable)</option><option value="ode23">ode23 (variable)</option>
+            <option value="auto">auto</option><option value="ode45">ode45 (variable)</option><option value="ode23">ode23 (variable)</option><option value="ode23s">ode23s (stiff)</option>
             <option value="ode4">ode4 (RK4, fixed)</option><option value="ode2">ode2 (Heun, fixed)</option><option value="ode1">ode1 (Euler, fixed)</option><option value="discrete">discrete</option>
           </select></label>
         <button class="ea" data-a="settings" title="Solver settings">Settings…</button>

@@ -72,7 +72,7 @@ pub struct Line {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SolverSettings {
-    /// "auto", "ode45", "ode23", "ode1", "ode2", "ode4", "discrete".
+    /// "auto", "ode45", "ode23", "ode23s", "ode1", "ode2", "ode4", "discrete".
     #[serde(default = "default_solver")]
     pub solver: String,
     #[serde(default = "default_stop")]

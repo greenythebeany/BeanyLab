@@ -1,5 +1,6 @@
 //! ODE solvers for the simulator: fixed-step Euler, Heun and RK4; adaptive
-//! Dormand–Prince 5(4) and Bogacki–Shampine 3(2) with error control.
+//! Dormand–Prince 5(4) and Bogacki–Shampine 3(2) with error control, and a
+//! linearly implicit Rosenbrock 2(3) method for stiff systems.
 
 use super::SimError;
 use crate::interp::Interp;
@@ -16,6 +17,7 @@ pub enum Method {
     Ode4,
     Ode23,
     Ode45,
+    Ode23s,
     Discrete,
 }
 
@@ -27,6 +29,8 @@ impl Method {
             "ode4" => Method::Ode4,
             "ode23" => Method::Ode23,
             "ode45" => Method::Ode45,
+            // No BDF solver yet: stiff requests use the Rosenbrock method.
+            "ode23s" | "ode15s" => Method::Ode23s,
             "discrete" => Method::Discrete,
             _ => return None,
         })
@@ -101,6 +105,9 @@ fn embedded<S: System>(
     x: &[f64],
     h: f64,
 ) -> Result<(Vec<f64>, Vec<f64>), SimError> {
+    if m == Method::Ode23s {
+        return rosenbrock(s, it, t, x, h);
+    }
     if m == Method::Ode23 {
         let k1 = s.f(it, t, x)?;
         let k2 = s.f(it, t + h / 2.0, &axpy(x, h, &[(0.5, &k1)]))?;
@@ -203,6 +210,67 @@ fn embedded<S: System>(
     Ok((y, e))
 }
 
+/// One Rosenbrock 2(3) step (the Shampine–Reichelt pair) with a
+/// finite-difference Jacobian: (second-order solution, error estimate).
+fn rosenbrock<S: System>(
+    s: &mut S,
+    it: &mut Interp,
+    t: f64,
+    x: &[f64],
+    h: f64,
+) -> Result<(Vec<f64>, Vec<f64>), SimError> {
+    use nalgebra::{DMatrix, DVector};
+    let n = x.len();
+    let d = 1.0 / (2.0 + std::f64::consts::SQRT_2);
+    let e32 = 6.0 + std::f64::consts::SQRT_2;
+    let f0 = s.f(it, t, x)?;
+    let mut jac = DMatrix::<f64>::zeros(n, n);
+    let mut xp = x.to_vec();
+    for j in 0..n {
+        let del = f64::EPSILON.sqrt() * x[j].abs().max(1.0);
+        xp[j] = x[j] + del;
+        let fj = s.f(it, t, &xp)?;
+        xp[j] = x[j];
+        for i in 0..n {
+            jac[(i, j)] = (fj[i] - f0[i]) / del;
+        }
+    }
+    let dt = f64::EPSILON.sqrt() * t.abs().max(1.0);
+    let ft = s.f(it, t + dt, x)?;
+    let tder: Vec<f64> = (0..n).map(|i| (ft[i] - f0[i]) / dt).collect();
+    let w = DMatrix::<f64>::identity(n, n) - jac * (h * d);
+    let lu = w.lu();
+    let solve = |rhs: Vec<f64>| -> Result<Vec<f64>, SimError> {
+        lu.solve(&DVector::from_vec(rhs))
+            .map(|v| v.as_slice().to_vec())
+            .ok_or_else(|| SimError {
+                message: format!(
+                    "The stiff solver met a singular iteration matrix at t = {}.",
+                    t
+                ),
+                block: None,
+            })
+    };
+    let k1 = solve((0..n).map(|i| f0[i] + h * d * tder[i]).collect())?;
+    let f1 = s.f(it, t + 0.5 * h, &axpy(x, h, &[(0.5, &k1)]))?;
+    let k2: Vec<f64> = solve((0..n).map(|i| f1[i] - k1[i]).collect())?
+        .iter()
+        .zip(&k1)
+        .map(|(a, b)| a + b)
+        .collect();
+    let y = axpy(x, h, &[(1.0, &k2)]);
+    let f2 = s.f(it, t + h, &y)?;
+    let k3 = solve(
+        (0..n)
+            .map(|i| f2[i] - e32 * (k2[i] - f1[i]) - 2.0 * (k1[i] - f0[i]) + h * d * tder[i])
+            .collect(),
+    )?;
+    let e = (0..n)
+        .map(|i| h / 6.0 * (k1[i] - 2.0 * k2[i] + k3[i]))
+        .collect();
+    Ok((y, e))
+}
+
 /// Adaptive step from t. Returns (x(t+h), h used, suggested next h).
 #[allow(clippy::too_many_arguments)]
 pub fn adaptive_step<S: System>(
@@ -219,7 +287,7 @@ pub fn adaptive_step<S: System>(
     if s.nx() == 0 {
         return Ok((x.to_vec(), h_max, h_max));
     }
-    let order = if m == Method::Ode23 { 3.0 } else { 5.0 };
+    let order = if m == Method::Ode45 { 5.0 } else { 3.0 };
     let mut h = h0.max(1e-14).min(h_max);
     for _ in 0..60 {
         let (y, e) = embedded(m, s, it, t, x, h)?;
@@ -254,7 +322,7 @@ pub fn step_to<S: System>(
 ) -> Result<Vec<f64>, SimError> {
     match m {
         Method::Discrete => Ok(x.to_vec()),
-        Method::Ode23 | Method::Ode45 => Ok(embedded(m, s, it, t, x, h)?.0),
+        Method::Ode23 | Method::Ode45 | Method::Ode23s => Ok(embedded(m, s, it, t, x, h)?.0),
         _ => fixed_step(m, s, it, t, x, h),
     }
 }

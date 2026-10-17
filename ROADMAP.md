@@ -56,7 +56,7 @@ After 1.0, wider toolbox coverage follows (M8).
 Set the project up so others can see, build, test and contribute.
 
 - [x] Git repository and first commit.
-- [ ] Public GitHub repository (waiting for go-ahead to publish).
+- [x] Public GitHub repository: github.com/greenythebeany/BeanyLab.
 - [x] License chosen and `LICENSE` file added (decision D1).
 - [x] Project name checked (decision D2).
 - [x] `CLEAN_ROOM.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, issue and PR templates.
@@ -92,7 +92,7 @@ Because the language milestones now come later, the simulator only uses language
 - [x] **Solvers:**
   - Fixed step: Euler (ode1), Heun (ode2), RK4 (ode4).
   - Variable step: Dormand–Prince 5(4) (ode45) and Bogacki–Shampine 3(2) (ode23), with relative and absolute tolerances.
-  - [ ] Stiff solver (Rosenbrock or BDF); moves to M5 if not done here.
+  - [x] Stiff solver: Rosenbrock `ode23s` (also used for `ode15s` until a BDF solver lands in M5), in models and on the command line.
   - [x] `ode45`/`ode23` (with `odeset` RelTol/AbsTol/MaxStep/InitialStep) as command-line functions.
 - [x] **Zero-crossing detection** by bisection, for Step, Ramp, Pulse, Switch, Saturation, Dead Zone, Relay, Abs, Sign, Relational Operator, integrator limits and integrator resets.
 - [x] **Model parameters** from the workspace (`K = 2` in the command window, `K` in a Gain block), evaluated before the simulation starts; errors name the block and parameter.

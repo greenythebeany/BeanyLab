@@ -3,3 +3,5 @@ ode45 oscillator: |sin(pi)| < 1e-6: 1, cos(pi) = -1.000000
 ode23 integral of t: 2.0000
 requested times: [0 0.5 1]
 values: 1.0000 0.6065 0.3679
+ode15s stiff: 0.5412 (cos(1) = 0.5403), few steps: 1
+ode23s van der Pol mu=1000: 1.9993

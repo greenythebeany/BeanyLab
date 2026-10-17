@@ -28,7 +28,7 @@ All values are strings, so they can hold expressions evaluated in the workspace 
 
 | Field | Default | Meaning |
 |---|---|---|
-| `solver` | `auto` | `auto`, `ode45`, `ode23` (variable step), `ode4`, `ode2`, `ode1` (fixed step), `discrete`. `auto` picks `ode45` when the model has continuous states, else `discrete`. |
+| `solver` | `auto` | `auto`, `ode45`, `ode23` (variable step), `ode23s` (variable step, stiff), `ode4`, `ode2`, `ode1` (fixed step), `discrete`. `auto` picks `ode45` when the model has continuous states, else `discrete`. |
 | `stop_time` | `10` | Simulation end time in seconds; `inf` runs until a Stop Simulation block or the Stop button. |
 | `max_step` | `auto` | Largest variable step. `auto` = stop time / 200. |
 | `fixed_step` | `auto` | Step for fixed-step solvers. `auto` = smallest discrete sample time, at most stop time / 50. |

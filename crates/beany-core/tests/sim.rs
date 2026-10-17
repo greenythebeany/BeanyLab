@@ -375,3 +375,29 @@ fn every_library_block_runs() {
         }
     }
 }
+
+#[test]
+fn stiff_solver_matches_explicit_solver_on_van_der_pol() {
+    let mut it = Interp::new();
+    it.cwd = models_dir();
+    it.eval_string(
+        "o = sim('van_der_pol', 'Solver', 'ode23s', 'RelTol', '1e-5', 'AbsTol', '1e-7');",
+    )
+    .unwrap();
+    let Some(Value::Struct(s)) = it.get_var("o") else {
+        panic!("no o struct")
+    };
+    let t = s.get(0, "tout").unwrap().to_num().unwrap().data;
+    let x1 = s.get(0, "x1").unwrap().to_num().unwrap().data;
+    for &tt in &[2.0, 5.0, 10.0] {
+        let got = at(&t, &x1, tt);
+        let exact = vdp_reference(tt);
+        assert!(
+            (got - exact).abs() < 2e-2,
+            "t={} got {} ref {}",
+            tt,
+            got,
+            exact
+        );
+    }
+}
