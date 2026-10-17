@@ -241,6 +241,13 @@ export function render(el: HTMLElement, fig: Figure, dark: boolean) {
     layout.xaxis = { visible: false };
     layout.yaxis = { visible: false };
   }
+  // Scope figures: a vertical time cursor that reads out every signal.
+  if ((fig as any).scope) {
+    layout.hovermode = "x unified";
+    for (const k of Object.keys(layout)) {
+      if (k.startsWith("xaxis")) Object.assign(layout[k], { showspikes: true, spikemode: "across", spikesnap: "cursor", spikethickness: 1, spikedash: "dot", spikecolor: dark ? "#94A3B8" : "#64748B" });
+    }
+  }
   // Plotly treats a present-but-undefined key (e.g. `marker: undefined`) as an object; drop them.
   Plotly.react(el, clean(data), clean(layout), {
     responsive: true,

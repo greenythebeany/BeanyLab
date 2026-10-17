@@ -155,6 +155,8 @@ pub struct Figure {
     pub uitables: Vec<UiTable>,
     /// Requested window size in pixels.
     pub size: Option<(f64, f64)>,
+    /// Drawn by a simulator Scope block: the UI shows a time cursor with values.
+    pub scope: bool,
 }
 
 impl Figure {
@@ -170,6 +172,7 @@ impl Figure {
             area: None,
             uitables: Vec::new(),
             size: None,
+            scope: false,
         }
     }
 }

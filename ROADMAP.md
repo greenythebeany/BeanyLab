@@ -117,7 +117,7 @@ Because the language milestones now come later, the simulator only uses language
   - [x] Pause and resume.
 - [x] **Scope window:** traces update during the simulation in the desktop app, autoscale, zoom, pan and image export.
   - [x] One axes per input (Scope "Axes" parameter).
-  - [ ] Cursors.
+  - [x] Time cursor with a read-out of every signal.
 - [x] Logged signals appear in the workspace as `out` (`out.tout`, To Workspace variables, `out.yout`).
 - [x] Current Folder shows `.bmdl` files with the model icon; double-click opens them; right-click → Simulate.
 - [x] Display blocks show their value on the canvas, updated live during the run.

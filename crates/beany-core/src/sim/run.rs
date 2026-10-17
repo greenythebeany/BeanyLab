@@ -133,6 +133,7 @@ fn draw_scopes(it: &mut Interp, tout: &[f64], logs: &[Log]) {
                 let id = it.graphics.figure(None);
                 if let Some(f) = it.graphics.figures.iter_mut().find(|f| f.id == id) {
                     f.name = Some(title.clone());
+                    f.scope = true;
                 }
                 id
             }
