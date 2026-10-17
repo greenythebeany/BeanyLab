@@ -1,7 +1,7 @@
 import "./style.css";
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
-import { call, interrupt, onStream, pickFolder, pickOpenFile, pickSaveFile } from "./api";
+import { call, interrupt, onEvent, onStream, pauseSim, pickFolder, pickOpenFile, pickSaveFile } from "./api";
 import type { EvalResult, FileEntry, Figure, VarInfo, VarDetail } from "./api";
 import { icon, fileIcon, APP_ICON } from "./icons";
 import { registerLanguage, LANG, sectionAt } from "./mlang";
@@ -705,7 +705,8 @@ function newModelTab(path: string | null, name: string, model: Model) {
     ports: (blocks: BlockSpec[]) => call<[number, number][]>("block_ports", { blocks }),
     onChange: () => renderTabsDebounced(),
     run: () => runModel(t),
-    stop: () => stop(),
+    stop: () => { if (simPaused) { simPaused = false; t.me!.setPaused(false); } stop(); },
+    pause: () => { if (simTab === t) { simPaused = !simPaused; pauseSim(simPaused); } },
     save: () => { activate(t); saveActive(false); },
     toast,
   });
@@ -720,11 +721,29 @@ function newModel() {
   newModelTab(null, `${name}.bmdl`, emptyModel(name));
 }
 
+// The model tab whose simulation is running, for live progress events.
+let simTab: Tab | null = null;
+let simPaused = false;
+
+function onEngineEvent(name: string, p: any) {
+  if (!simTab?.me) return;
+  if (name === "sim-progress") {
+    simTab.me.setDisplays(p.displays);
+    if (!simPaused) $("status-text").textContent = `Running… t = ${+(+p.t).toPrecision(6)}`;
+  } else if (name === "sim-state") {
+    simPaused = p.paused;
+    simTab.me.setPaused(p.paused);
+    $("status-text").textContent = p.paused ? `Paused at t = ${+(+p.t).toPrecision(6)}` : "Running…";
+  }
+}
+
 function runModel(t: Tab): Promise<void> {
   const label = t.name.replace(/\.bmdl$/i, "");
   addHistory(`sim('${label}')`);
   return new Promise((resolve) => enqueue(async () => {
     appendText(`>> sim('${label}')\n`, "echo");
+    simTab = t;
+    simPaused = false;
     try {
       t.me!.setError(null);
       const r = await call<{ result: EvalResult; report: { displays: { id: string; value: number[] }[]; error_block: string | null; stop_time: number } }>("sim", { model: t.me!.root, label });
@@ -733,6 +752,9 @@ function runModel(t: Tab): Promise<void> {
       if (r.report.error_block) t.me!.setError(r.report.error_block);
       $("status-text").textContent = r.result.error ? "Simulation failed" : `Simulation finished at t = ${+r.report.stop_time.toPrecision(6)}`;
     } finally {
+      simTab = null;
+      simPaused = false;
+      t.me!.setPaused(false);
       resolve();
     }
   }));
@@ -1174,6 +1196,7 @@ async function boot() {
     (s) => appendText(s),
     (f) => applyFigures(f.figures, f.closed),
   );
+  await onEvent(onEngineEvent);
   try {
     blockLib.push(...(await call<BlockDef[]>("block_library")));
     const st: any = await call("state");

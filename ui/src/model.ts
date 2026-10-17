@@ -14,6 +14,7 @@ export interface EditorHost {
   onChange(): void;
   run(): void;
   stop(): void;
+  pause(): void;
   save(): void;
   toast(msg: string): void;
 }
@@ -190,6 +191,7 @@ export class ModelEditor {
     this.wrap.innerHTML = `
       <div class="me-toolbar">
         <button class="ea primary" data-a="run" title="Run simulation (Ctrl+T)"><span>▶ Run</span></button>
+        <button class="ea" data-a="pause" title="Pause or resume the running simulation"><span>❚❚ Pause</span></button>
         <button class="ea stop-btn" data-a="stop" title="Stop simulation"><span>■ Stop</span></button>
         <label class="me-field">Stop time <input data-s="stop_time" size="6"></label>
         <label class="me-field">Solver
@@ -218,6 +220,7 @@ export class ModelEditor {
         const a = b.dataset.a;
         if (a === "run") this.host.run();
         else if (a === "stop") this.host.stop();
+        else if (a === "pause") this.host.pause();
         else if (a === "save") this.host.save();
         else if (a === "fit") this.fit();
         else if (a === "undo") this.doUndo();
@@ -352,6 +355,11 @@ export class ModelEditor {
   }
 
   // ------------------------------------------------------------- render
+
+  setPaused(paused: boolean) {
+    const b = this.wrap.querySelector('[data-a="pause"] span');
+    if (b) b.textContent = paused ? "▶ Resume" : "❚❚ Pause";
+  }
 
   setDisplays(values: { id: string; value: number[] }[]) {
     this.displays = new Map(values.map((v) => [v.id, v.value]));

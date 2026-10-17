@@ -47,6 +47,26 @@ export async function interrupt(): Promise<void> {
   await fetch("/api/interrupt", { method: "POST", body: "{}" });
 }
 
+/** Hold (true) or resume (false) a running simulation. */
+export async function pauseSim(on: boolean): Promise<void> {
+  if (tauri) {
+    await ensureTauri();
+    await invoke!("pause", { on });
+    return;
+  }
+  await fetch("/api/pause", { method: "POST", body: JSON.stringify({ on }) });
+}
+
+/** Named engine events such as simulation progress (desktop only). */
+export async function onEvent(handler: (name: string, payload: any) => void) {
+  if (!tauri) return;
+  await ensureTauri();
+  await listen!("beany-event", (e) => {
+    const p = e.payload as { name: string; payload: any };
+    handler(p.name, p.payload);
+  });
+}
+
 /** Live output/figure streams (desktop only; the browser gets everything in the result). */
 export async function onStream(onOutput: (s: string) => void, onFigures: (f: { figures: Figure[]; closed: number[] }) => void) {
   if (!tauri) return;

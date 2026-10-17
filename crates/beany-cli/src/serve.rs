@@ -35,6 +35,7 @@ pub fn run(args: &[String]) {
     let ui = std::fs::canonicalize(&ui).unwrap_or(ui);
     let session = Arc::new(Mutex::new(Session::new()));
     let interrupt = session.lock().unwrap().interp.interrupt.clone();
+    let pause = session.lock().unwrap().interp.pause.clone();
     let server = Server::http(("127.0.0.1", port)).expect("failed to bind port");
     println!(
         "BeanyLab UI on http://127.0.0.1:{}  (serving {})",
@@ -44,6 +45,7 @@ pub fn run(args: &[String]) {
     for mut req in server.incoming_requests() {
         let session = session.clone();
         let interrupt = interrupt.clone();
+        let pause = pause.clone();
         let ui = ui.clone();
         std::thread::spawn(move || {
             let url = req.url().to_string();
@@ -61,6 +63,12 @@ pub fn run(args: &[String]) {
                 let _ = req.as_reader().read_to_string(&mut body);
                 let args: serde_json::Value =
                     serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                if method == "pause" {
+                    let on = args.get("on").and_then(|v| v.as_bool()).unwrap_or(false);
+                    pause.store(on, Ordering::Relaxed);
+                    let _ = req.respond(json_response("null".into(), 200));
+                    return;
+                }
                 let result = session.lock().unwrap().call(method, &args);
                 let resp = match result {
                     Ok(v) => json_response(v.to_string(), 200),

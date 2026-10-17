@@ -401,3 +401,30 @@ fn stiff_solver_matches_explicit_solver_on_van_der_pol() {
         );
     }
 }
+
+#[test]
+fn pause_holds_the_run_and_stop_ends_it() {
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex};
+    let mut it = Interp::new();
+    it.cwd = models_dir();
+    let events = Arc::new(Mutex::new(Vec::<String>::new()));
+    let ev = events.clone();
+    it.event_stream = Some(Box::new(move |name, p| {
+        ev.lock().unwrap().push(format!("{} {}", name, p["paused"]));
+    }));
+    let (pause, interrupt) = (it.pause.clone(), it.interrupt.clone());
+    let driver = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        pause.store(true, Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        interrupt.store(true, Ordering::Relaxed);
+    });
+    it.eval_string("o = sim('first_order', 'StopTime', 'inf');")
+        .unwrap();
+    driver.join().unwrap();
+    let ev = events.lock().unwrap();
+    assert!(ev.iter().any(|e| e == "sim-state true"), "{:?}", ev);
+    assert!(ev.iter().any(|e| e.starts_with("sim-progress")));
+    assert!(it.get_var("o").is_some());
+}

@@ -68,6 +68,10 @@ pub struct Interp {
     pub stream: Option<Box<dyn FnMut(&str) + Send>>,
     pub figure_stream: Option<Box<dyn FnMut(Vec<Figure>, Vec<u32>) + Send>>,
     pub interrupt: Arc<AtomicBool>,
+    /// Set by the UI to hold a running simulation; cleared to resume.
+    pub pause: Arc<AtomicBool>,
+    /// Named UI events such as simulation progress (desktop only).
+    pub event_stream: Option<Box<dyn FnMut(&str, serde_json::Value) + Send>>,
     pub format: Format,
     pub rng: StdRng,
     end_ctx: Vec<(usize, usize, usize, usize)>,
@@ -110,6 +114,8 @@ impl Interp {
             stream: None,
             figure_stream: None,
             interrupt: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
+            event_stream: None,
             format: Format::Short,
             rng: StdRng::seed_from_u64(0x5eed),
             end_ctx: Vec::new(),
@@ -150,6 +156,13 @@ impl Interp {
                     cb(figs, closed);
                 }
             }
+        }
+    }
+
+    /// Send a named event to the UI, if one is listening.
+    pub fn emit(&mut self, name: &str, payload: serde_json::Value) {
+        if let Some(cb) = self.event_stream.as_mut() {
+            cb(name, payload);
         }
     }
 

@@ -229,6 +229,12 @@ pub fn run(
     let result = simulate(model, it, |it, tout, logs| {
         draw_scopes(it, tout, logs);
         it.flush_graphics();
+        let t = tout.last().copied().unwrap_or(0.0);
+        let displays = serde_json::to_value(display_values(logs)).unwrap_or_default();
+        it.emit(
+            "sim-progress",
+            serde_json::json!({ "t": t, "displays": displays }),
+        );
     });
     let out = match result {
         Ok(o) => o,
@@ -248,18 +254,14 @@ pub fn run(
     let n = out.tout.len();
     let mut fields: Vec<(String, Value)> = vec![("tout".into(), Value::col(out.tout.clone()))];
     let mut outports: Vec<(usize, &Log)> = Vec::new();
-    let mut displays = Vec::new();
+    let displays = display_values(&out.logs);
     for log in &out.logs {
         match &log.kind {
             LogKind::ToWorkspace(var) => {
                 fields.push((var.clone(), rows_to_matrix(&log.data[0], n)))
             }
             LogKind::Outport(k) => outports.push((*k, log)),
-            LogKind::Display => displays.push(DisplayValue {
-                id: log.id.clone(),
-                value: log.data[0].last().cloned().unwrap_or_default(),
-            }),
-            LogKind::Scope { .. } => {}
+            LogKind::Display | LogKind::Scope { .. } => {}
         }
     }
     if !outports.is_empty() {
@@ -282,6 +284,17 @@ pub fn run(
             stop_time: stop,
         },
     ))
+}
+
+/// Latest value shown by each Display block.
+fn display_values(logs: &[Log]) -> Vec<DisplayValue> {
+    logs.iter()
+        .filter(|l| matches!(l.kind, LogKind::Display))
+        .map(|l| DisplayValue {
+            id: l.id.clone(),
+            value: l.data[0].last().cloned().unwrap_or_default(),
+        })
+        .collect()
 }
 
 fn rows_to_matrix(rows: &[Vec<f64>], n: usize) -> Value {

@@ -727,6 +727,8 @@ pub fn simulate(
     let mut last_progress = Instant::now();
     let mut stopped_by_user = false;
     let interrupt = it.interrupt.clone();
+    let pause = it.pause.clone();
+    pause.store(false, Ordering::Relaxed);
 
     loop {
         // Log this major step.
@@ -751,6 +753,19 @@ pub fn simulate(
         if last_progress.elapsed().as_millis() >= 100 {
             progress(it, &tout, &logs);
             last_progress = Instant::now();
+        }
+        if pause.load(Ordering::Relaxed) {
+            progress(it, &tout, &logs);
+            it.emit("sim-state", serde_json::json!({ "paused": true, "t": t }));
+            while pause.load(Ordering::Relaxed) && !interrupt.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            pause.store(false, Ordering::Relaxed);
+            it.emit("sim-state", serde_json::json!({ "paused": false, "t": t }));
+            if interrupt.swap(false, Ordering::Relaxed) {
+                stopped_by_user = true;
+                break;
+            }
         }
         if !t_end.is_finite() && started.elapsed().as_secs() > 3600 {
             warnings

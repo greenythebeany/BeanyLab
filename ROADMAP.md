@@ -114,13 +114,13 @@ Because the language milestones now come later, the simulator only uses language
 - [x] Model editor tab: searchable block library, drag-and-drop canvas, ports, orthogonal signal lines with fan-out, zoom and pan, multi-select, copy/paste, undo/redo, delete.
 - [x] Double-click a block to edit its parameters; double-click a subsystem to open it; breadcrumb navigation.
 - [x] Run and Stop, stop time, solver choice and solver settings; errors highlight the block that caused them.
-  - [ ] Pause and resume.
+  - [x] Pause and resume.
 - [x] **Scope window:** traces update during the simulation in the desktop app, autoscale, zoom, pan and image export.
   - [x] One axes per input (Scope "Axes" parameter).
   - [ ] Cursors.
 - [x] Logged signals appear in the workspace as `out` (`out.tout`, To Workspace variables, `out.yout`).
 - [x] Current Folder shows `.bmdl` files with the model icon; double-click opens them; right-click → Simulate.
-- [ ] Display blocks show their final value on the canvas (done); live values during the run (open).
+- [x] Display blocks show their value on the canvas, updated live during the run.
 
 **Not in M1:** importing `.slx` files (zipped XML) is a later interoperability item. Code generation and hardware targets are out of scope.
 

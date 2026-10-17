@@ -10,6 +10,7 @@ use tauri::{Emitter, Manager, State};
 struct AppState {
     session: Arc<Mutex<Session>>,
     interrupt: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
 }
 
 /// Every engine request goes through one command; long evaluations run off the UI thread.
@@ -35,6 +36,12 @@ fn interrupt(state: State<'_, AppState>) {
     state.interrupt.store(true, Ordering::Relaxed);
 }
 
+/// Hold (true) or resume (false) a running simulation.
+#[tauri::command]
+fn pause(state: State<'_, AppState>, on: bool) {
+    state.pause.store(on, Ordering::Relaxed);
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -58,14 +65,23 @@ fn main() {
                     serde_json::json!({ "figures": figs, "closed": closed }),
                 );
             }));
+            let h = app.handle().clone();
+            session.interp.event_stream = Some(Box::new(move |name, payload| {
+                let _ = h.emit(
+                    "beany-event",
+                    serde_json::json!({ "name": name, "payload": payload }),
+                );
+            }));
             let interrupt = session.interp.interrupt.clone();
+            let pause = session.interp.pause.clone();
             app.manage(AppState {
                 session: Arc::new(Mutex::new(session)),
                 interrupt,
+                pause,
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![api, interrupt])
+        .invoke_handler(tauri::generate_handler![api, interrupt, pause])
         .run(tauri::generate_context!())
         .expect("error while running BeanyLab");
 }
