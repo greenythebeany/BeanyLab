@@ -81,6 +81,14 @@ fn main() {
             });
             Ok(())
         })
+        // Closing the main window quits the app, model windows included.
+        .on_window_event(|w, e| {
+            if w.label() == "main" {
+                if let tauri::WindowEvent::Destroyed = e {
+                    w.app_handle().exit(0);
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![api, interrupt, pause])
         .run(tauri::generate_context!())
         .expect("error while running BeanyLab");

@@ -12,7 +12,9 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "BeanyLab",
+        "dragDropEnabled": false,
         "width": 1440,
         "height": 900,
         "minWidth": 900,
@@ -28,7 +30,8 @@
     "targets": ["nsis", "msi", "deb", "appimage"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico", "icons/icon.png"],
     "fileAssociations": [
-      { "ext": ["m"], "name": "BeanyLab Code File", "description": "MATLAB-language code file", "role": "Editor" }
+      { "ext": ["m"], "name": "BeanyLab Code File", "description": "MATLAB-language code file", "role": "Editor" },
+      { "ext": ["bmdl"], "name": "BeanyLab Model", "description": "BeanyLab block-diagram model", "role": "Editor" }
     ]
   }
 }

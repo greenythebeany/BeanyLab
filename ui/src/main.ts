@@ -1,7 +1,7 @@
 import "./style.css";
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
-import { call, interrupt, onEvent, onStream, pauseSim, pickFolder, pickOpenFile, pickSaveFile } from "./api";
+import { broadcast, call, closeAppWindow, guardClose, onWindowClose, openFigureWindow, tileWindows, interrupt, isDesktop, onAppEvent, onEvent, onStream, openAppWindow, pauseSim, pickFolder, pickOpenFile, pickSaveFile, setWindowTitle } from "./api";
 import type { EvalResult, FileEntry, Figure, VarInfo, VarDetail } from "./api";
 import { icon, fileIcon, APP_ICON } from "./icons";
 import { registerLanguage, LANG, sectionAt } from "./mlang";
@@ -10,6 +10,12 @@ import { ModelEditor, emptyModel } from "./model";
 import type { BlockDef, BlockSpec, Model } from "./model";
 
 (self as any).MonacoEnvironment = { getWorker: () => new EditorWorker() };
+
+// In the desktop app each model opens in its own window: index.html?model=<path> or ?newmodel=<name>.
+const query = new URLSearchParams(location.search);
+const modelWindow = query.has("model") || query.has("newmodel");
+// Desktop figures are OS windows too: index.html?figure=<id>.
+const figureWindow = query.has("figure");
 registerLanguage(monaco);
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -111,6 +117,7 @@ const RIBBON: Record<string, Group[]> = {
     ] },
     { label: "Figures", items: [
       { label: "New Figure", icon: "window", run: () => execute("figure", true) },
+      { label: "Tile Figures", icon: "window", run: () => tileFigures(), title: "Arrange all figure windows side by side" },
       { label: "Close All", icon: "close", run: () => execute("close all", true) },
     ] },
   ],
@@ -580,6 +587,7 @@ function editorAction(id: string) {
 }
 
 function renderTabs() {
+  updateModelWindowTitle();
   const el = $("editor-tabs");
   el.innerHTML = "";
   for (const t of tabs) {
@@ -718,7 +726,33 @@ function newModelTab(path: string | null, name: string, model: Model) {
 function newModel() {
   const name = `untitled${untitledModelSeq > 1 ? untitledModelSeq : ""}`;
   untitledModelSeq++;
+  if (isDesktop && !modelWindow) {
+    openAppWindow(`model-new-${Date.now()}`, `newmodel=${encodeURIComponent(name)}`, `${name}.bmdl - BeanyLab Model`);
+    return;
+  }
   newModelTab(null, `${name}.bmdl`, emptyModel(name));
+}
+
+function modelWindowLabel(path: string): string {
+  return "model-" + path.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+}
+
+/** Model windows report their simulations so the main window shows output, workspace and figures. */
+function wireModelEvents() {
+  if (modelWindow) return;
+  onAppEvent("model-result", (p: { label: string; result: EvalResult }) => {
+    addHistory(`sim('${p.label}')`);
+    appendText(`>> sim('${p.label}')\n`, "echo");
+    handleResult(p.result);
+  });
+  onAppEvent("model-saved", () => refreshFiles());
+  onAppEvent("figure-closed", (id: number) => { figWins.delete(id); });
+}
+
+function updateModelWindowTitle() {
+  const t = tabs[0];
+  if (!modelWindow || !t) return;
+  setWindowTitle(`${isDirty(t) ? "● " : ""}${t.name} - BeanyLab Model`);
 }
 
 // The model tab whose simulation is running, for live progress events.
@@ -739,7 +773,7 @@ function onEngineEvent(name: string, p: any) {
 
 function runModel(t: Tab): Promise<void> {
   const label = t.name.replace(/\.bmdl$/i, "");
-  addHistory(`sim('${label}')`);
+  if (!modelWindow) addHistory(`sim('${label}')`);
   return new Promise((resolve) => enqueue(async () => {
     appendText(`>> sim('${label}')\n`, "echo");
     simTab = t;
@@ -748,6 +782,7 @@ function runModel(t: Tab): Promise<void> {
       t.me!.setError(null);
       const r = await call<{ result: EvalResult; report: { displays: { id: string; value: number[] }[]; error_block: string | null; stop_time: number } }>("sim", { model: t.me!.root, label });
       handleResult(r.result);
+      if (modelWindow) broadcast("model-result", { label, result: r.result });
       t.me!.setDisplays(r.report.displays);
       if (r.report.error_block) t.me!.setError(r.report.error_block);
       $("status-text").textContent = r.result.error ? "Simulation failed" : `Simulation finished at t = ${+r.report.stop_time.toPrecision(6)}`;
@@ -764,6 +799,10 @@ async function openPath(path: string) {
   const existing = tabs.find((t) => (t.kind === "code" || t.kind === "model") && t.path && samePath(t.path, path));
   if (existing) { activate(existing); return; }
   if (/\.bmdl$/i.test(path)) {
+    if (isDesktop && !modelWindow) {
+      openAppWindow(modelWindowLabel(path), `model=${encodeURIComponent(path)}`, `${baseName(path)} - BeanyLab Model`);
+      return;
+    }
     try {
       const text: string = await call("read", { path });
       const model = JSON.parse(text) as Model;
@@ -816,6 +855,7 @@ async function saveActive(as: boolean): Promise<boolean> {
   t.saved = t.kind === "model" ? JSON.stringify(t.me!.root) : text;
   renderTabs();
   refreshFiles();
+  if (modelWindow) broadcast("model-saved", { path });
   $("status-text").textContent = `Saved ${t.name}`;
   return true;
 }
@@ -954,7 +994,29 @@ interface FigWin { fig: Figure; win: HTMLElement; body: HTMLElement }
 const figures = new Map<number, FigWin>();
 let figZ = 10;
 
+/** Figure ids that have an OS window (desktop, main window only). */
+const figWins = new Set<number>();
+
+function figureTitle(fig: Figure): string {
+  return `Figure ${fig.id}${fig.name ? ": " + fig.name : ""}`;
+}
+
 function applyFigures(figs: Figure[], closed: number[]) {
+  if (isDesktop) {
+    // The main window owns figure windows; model windows leave figures to it.
+    if (modelWindow) return;
+    for (const id of closed) {
+      if (figWins.delete(id)) closeAppWindow(`figure-${id}`);
+    }
+    for (const fig of figs) {
+      if (figWins.has(fig.id)) continue;
+      figWins.add(fig.id);
+      const req = (fig as any).size as [number, number] | null;
+      openFigureWindow(fig.id, figureTitle(fig), req ? req[0] : 680, req ? req[1] + 40 : 560, figWins.size - 1);
+    }
+    if (figs.length || closed.length) broadcast("figure-data", { figures: figs, closed });
+    return;
+  }
   for (const id of closed) {
     const f = figures.get(id);
     if (f) { plots.purge(f.body); f.win.remove(); figures.delete(id); }
@@ -983,13 +1045,16 @@ function createFigureWindow(fig: Figure): FigWin {
   win.style.height = h + "px";
   win.style.left = Math.max(20, Math.min(window.innerWidth - w - 20, window.innerWidth - w - 380 + n * 28)) + "px";
   win.style.top = Math.max(40, Math.min(window.innerHeight - h - 30, 150 + n * 28)) + "px";
-  win.innerHTML = `<div class="figbar">${icon("chartLine", 16)}<span class="figtitle"></span><span class="spacer"></span><button class="ib small" title="Close">${icon("close", 14)}</button></div><div class="figbody"></div>`;
+  win.innerHTML = `<div class="figbar">${icon("chartLine", 16)}<span class="figtitle"></span><span class="spacer"></span><button class="ib small fig-max" title="Maximize">${icon("window", 14)}</button><button class="ib small fig-close" title="Close">${icon("close", 14)}</button></div><div class="figbody"></div>`;
   layer.appendChild(win);
   const body = win.querySelector(".figbody") as HTMLElement;
   const f: FigWin = { fig, win, body };
   figures.set(fig.id, f);
   const bar = win.querySelector(".figbar") as HTMLElement;
-  (bar.querySelector("button") as HTMLElement).onclick = async () => {
+  const toggleMax = () => { win.classList.toggle("max"); plots.resize(body); };
+  (bar.querySelector(".fig-max") as HTMLElement).onclick = toggleMax;
+  bar.addEventListener("dblclick", (e) => { if (!(e.target as HTMLElement).closest("button")) toggleMax(); });
+  (bar.querySelector(".fig-close") as HTMLElement).onclick = async () => {
     plots.purge(body);
     win.remove();
     figures.delete(fig.id);
@@ -1012,6 +1077,54 @@ function createFigureWindow(fig: Figure): FigWin {
   });
   new ResizeObserver(() => plots.resize(body)).observe(body);
   return f;
+}
+
+async function tileFigures() {
+  if (isDesktop) {
+    const n = await tileWindows("figure-");
+    if (!n) toast("No figures are open.");
+    return;
+  }
+  // Browser: tile the floating figure panels over the desk.
+  const list = [...figures.values()];
+  if (!list.length) { toast("No figures are open."); return; }
+  const desk = $("desk").getBoundingClientRect();
+  const cols = Math.ceil(Math.sqrt(list.length));
+  const rows = Math.ceil(list.length / cols);
+  const w = Math.floor(desk.width / cols);
+  const h = Math.floor(desk.height / rows);
+  list.forEach((f, i) => {
+    f.win.classList.remove("max");
+    Object.assign(f.win.style, { left: desk.left + (i % cols) * w + "px", top: desk.top + Math.floor(i / cols) * h + "px", width: w - 4 + "px", height: h - 4 + "px" });
+  });
+}
+
+/** A desktop figure window: one figure filling the window, updated from the main window. */
+async function bootFigure() {
+  const id = Number(query.get("figure"));
+  document.body.classList.add("figure-window");
+  const host = document.createElement("div");
+  host.className = "figure-solo";
+  document.body.appendChild(host);
+  applyTheme();
+  const draw = (fig: Figure) => {
+    setWindowTitle(figureTitle(fig));
+    plots.render(host, fig, dark);
+  };
+  new ResizeObserver(() => plots.resize(host)).observe(host);
+  await onAppEvent("figure-data", (p: { figures: Figure[]; closed: number[] }) => {
+    const fig = p.figures.find((f) => f.id === id);
+    if (fig) draw(fig);
+  });
+  await onWindowClose(async () => {
+    await broadcast("figure-closed", id);
+    await call("close_figure", { id }).catch(() => undefined);
+  });
+  try {
+    const st: any = await call("state");
+    const fig = (st.figures as Figure[]).find((f) => f.id === id);
+    if (fig) draw(fig);
+  } catch { /* the engine may be busy; updates arrive as events */ }
 }
 
 function focusFigure(f: FigWin) {
@@ -1186,6 +1299,7 @@ function wireChrome() {
 }
 
 async function boot() {
+  if (figureWindow) { await bootFigure(); return; }
   wireChrome();
   renderRibbon();
   initSplitters();
@@ -1197,6 +1311,8 @@ async function boot() {
     (f) => applyFigures(f.figures, f.closed),
   );
   await onEvent(onEngineEvent);
+  wireModelEvents();
+  if (modelWindow) document.body.classList.add("model-window");
   try {
     blockLib.push(...(await call<BlockDef[]>("block_library")));
     const st: any = await call("state");
@@ -1211,6 +1327,17 @@ async function boot() {
     refreshFiles();
   } catch (e) {
     appendText(`Could not reach the BeanyLab engine: ${e}\n`, "err");
+  }
+  if (modelWindow) {
+    const path = query.get("model");
+    if (path) await openPath(path);
+    else {
+      const name = query.get("newmodel") || "untitled";
+      newModelTab(null, `${name}.bmdl`, emptyModel(name));
+    }
+    updateModelWindowTitle();
+    guardClose(() => !tabs[0] || !isDirty(tabs[0]) || confirm(`${tabs[0].name} has unsaved changes. Close it anyway?`));
+    return;
   }
   appendText(`BeanyLab 0.1 — clean-room numeric computing environment.\nType commands at >> or open a .m file. Type "help" for keyboard shortcuts.\n\n`, "info");
   input.focus();

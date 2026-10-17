@@ -65,7 +65,9 @@ function glyph(b: BlockSpec, display?: number[]): string {
   const cx = w / 2;
   const cy = h / 2;
   const P = b.params;
-  const txt = (s: string, size = 12, y = cy) => `<text x="${cx}" y="${y}" class="bt" font-size="${size}" dominant-baseline="middle" text-anchor="middle">${esc(s)}</text>`;
+  // Shrink long text so it stays inside the block (monospace glyphs are about 0.62 em wide).
+  const fit = (s: string, size: number) => Math.max(5, Math.min(size, (w * 0.86) / (0.62 * Math.max(1, s.length))));
+  const txt = (s: string, size = 12, y = cy) => `<text x="${cx}" y="${y}" class="bt" font-size="${fit(s, size).toFixed(1)}" dominant-baseline="middle" text-anchor="middle">${esc(s)}</text>`;
   const frac = (n: string, d: string, v: string) =>
     `${txt(polyText(n, v), 11, cy - 9)}<line x1="${w * 0.15}" y1="${cy}" x2="${w * 0.85}" y2="${cy}" class="bl"/>${txt(polyText(d, v), 11, cy + 10)}`;
   const path = (d: string) => `<path d="${d}" class="bl" fill="none"/>`;
@@ -144,6 +146,7 @@ export class ModelEditor {
   private selection = new Set<string>();
   private selLine: number | null = null;
   private view = { x: 0, y: 0, k: 1 };
+  private lastPress: { target: string; t: number; x: number; y: number } | null = null;
   private svg!: SVGSVGElement;
   private layer!: SVGGElement;
   private host: EditorHost;
@@ -260,8 +263,9 @@ export class ModelEditor {
         item.className = "me-item";
         item.draggable = true;
         item.title = d.description;
-        const sample: BlockSpec = { id: "", type: d.type, name: d.type, x: 0, y: 0, w: 46, h: 30, params: Object.fromEntries(d.params.map((p) => [p.name, p.default])) };
-        item.innerHTML = `<svg width="46" height="30" class="me-thumb">${shapeMarkup(sample)}${glyph(sample)}</svg><span>${esc(label(d.type))}</span>`;
+        // Drawn at canvas size, then scaled down so text and lines keep their proportions.
+        const sample: BlockSpec = { id: "", type: d.type, name: d.type, x: 0, y: 0, w: 80, h: 50, params: Object.fromEntries(d.params.map((p) => [p.name, p.default])) };
+        item.innerHTML = `<svg width="56" height="35" viewBox="-2 -2 84 54" class="me-thumb">${shapeMarkup(sample)}${glyph(sample)}</svg><span>${esc(label(d.type))}</span>`;
         item.ondragstart = (e) => { e.dataTransfer!.setData("text/beany-block", d.type); e.dataTransfer!.effectAllowed = "copy"; };
         item.ondblclick = () => {
           const c = this.toModel(this.svg.clientWidth / 2, this.svg.clientHeight / 2);
@@ -421,7 +425,6 @@ export class ModelEditor {
         hit.addEventListener("mousedown", (e) => { e.stopPropagation(); this.startWire(b, k + 1, e); });
       }
       grp.addEventListener("mousedown", (e) => this.onBlockDown(b, e));
-      grp.addEventListener("dblclick", (e) => { e.stopPropagation(); this.openBlock(b); });
       grp.addEventListener("contextmenu", (e) => { e.preventDefault(); this.blockMenu(b, e); });
     }
     this.renderCrumbs();
@@ -495,9 +498,25 @@ export class ModelEditor {
     this.focus();
   }
 
+  /** True when this press is the second of a double click on the same target. */
+  private isDouble(target: string, e: MouseEvent): boolean {
+    const now = performance.now();
+    const last = this.lastPress;
+    this.lastPress = { target, t: now, x: e.clientX, y: e.clientY };
+    if (last && last.target === target && now - last.t < 450 && Math.abs(last.x - e.clientX) + Math.abs(last.y - e.clientY) < 8) {
+      this.lastPress = null;
+      return true;
+    }
+    return false;
+  }
+
   private onBlockDown(b: BlockSpec, e: MouseEvent) {
     if (e.button !== 0) return;
     e.stopPropagation();
+    if (!e.shiftKey && !e.ctrlKey && this.isDouble(b.id, e)) {
+      this.openBlock(b);
+      return;
+    }
     this.selLine = null;
     if (e.shiftKey || e.ctrlKey) {
       if (this.selection.has(b.id)) this.selection.delete(b.id);
@@ -533,6 +552,10 @@ export class ModelEditor {
 
   private onBackgroundDown(e: MouseEvent) {
     if (e.button === 2) return;
+    if (e.button === 0 && this.isDouble("", e)) {
+      this.quickInsert(e.clientX, e.clientY);
+      return;
+    }
     this.focus();
     const start = { x: e.clientX, y: e.clientY, vx: this.view.x, vy: this.view.y };
     let moved = false;
@@ -669,7 +692,60 @@ export class ModelEditor {
     else if (ctrl && e.key.toLowerCase() === "v") { e.preventDefault(); this.paste(); }
     else if (ctrl && e.key.toLowerCase() === "a") { e.preventDefault(); this.selection = new Set(this.level.blocks.map((b) => b.id)); this.render(); }
     else if (ctrl && e.key.toLowerCase() === "t") { e.preventDefault(); this.host.run(); }
+    else if (e.key === " " && !ctrl) { e.preventDefault(); this.fit(); }
     else if (e.key === "Escape" && this.stack.length) { this.stack.pop(); this.selection.clear(); this.fit(); }
+  }
+
+  /** Double click on empty canvas: type to find a block and drop it there. */
+  quickInsert(clientX: number, clientY: number) {
+    document.querySelectorAll(".me-quick").forEach((m) => m.remove());
+    const r = this.svg.getBoundingClientRect();
+    const at = this.toModel(clientX - r.left, clientY - r.top);
+    const box = document.createElement("div");
+    box.className = "me-quick";
+    box.innerHTML = `<input placeholder="Search blocks" spellcheck="false"><div class="me-quick-list"></div>`;
+    box.style.left = Math.min(clientX, window.innerWidth - 300) + "px";
+    box.style.top = Math.min(clientY, window.innerHeight - 320) + "px";
+    document.body.appendChild(box);
+    const input = box.querySelector("input")!;
+    const list = box.querySelector(".me-quick-list") as HTMLElement;
+    let hits: BlockDef[] = [];
+    let cur = 0;
+    const close = () => { box.remove(); document.removeEventListener("mousedown", outside); this.focus(); };
+    const pick = (d: BlockDef | undefined) => { close(); if (d) this.addBlock(d.type, at.x, at.y); };
+    const draw = () => {
+      const q = input.value.trim().toLowerCase();
+      const score = (d: BlockDef) => {
+        const l = label(d.type).toLowerCase();
+        if (!q) return 1;
+        if (l.startsWith(q) || d.type.toLowerCase().startsWith(q)) return 3;
+        if (l.includes(q) || d.type.toLowerCase().includes(q)) return 2;
+        return d.description.toLowerCase().includes(q) || d.category.toLowerCase().includes(q) ? 1 : 0;
+      };
+      hits = this.host.library.map((d) => [score(d), d] as const).filter(([s]) => s > 0).sort((a, b) => b[0] - a[0]).map(([, d]) => d).slice(0, 12);
+      cur = Math.min(cur, Math.max(0, hits.length - 1));
+      list.innerHTML = "";
+      hits.forEach((d, i) => {
+        const row = document.createElement("div");
+        row.className = "me-quick-row" + (i === cur ? " on" : "");
+        row.innerHTML = `<b>${esc(label(d.type))}</b><span>${esc(d.category)}</span>`;
+        row.title = d.description;
+        row.onmousedown = (ev) => { ev.preventDefault(); pick(d); };
+        list.appendChild(row);
+      });
+      if (!hits.length) list.innerHTML = `<div class="me-quick-none">No matching blocks</div>`;
+    };
+    input.addEventListener("input", () => { cur = 0; draw(); });
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") { ev.preventDefault(); close(); }
+      else if (ev.key === "Enter") { ev.preventDefault(); pick(hits[cur]); }
+      else if (ev.key === "ArrowDown") { ev.preventDefault(); cur = Math.min(hits.length - 1, cur + 1); draw(); }
+      else if (ev.key === "ArrowUp") { ev.preventDefault(); cur = Math.max(0, cur - 1); draw(); }
+    });
+    const outside = (ev: MouseEvent) => { if (!box.contains(ev.target as Node)) close(); };
+    setTimeout(() => document.addEventListener("mousedown", outside), 0);
+    draw();
+    input.focus();
   }
 
   private blockMenu(b: BlockSpec, e: MouseEvent) {

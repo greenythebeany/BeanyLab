@@ -121,6 +121,8 @@ Because the language milestones now come later, the simulator only uses language
 - [x] Logged signals appear in the workspace as `out` (`out.tout`, To Workspace variables, `out.yout`).
 - [x] Current Folder shows `.bmdl` files with the model icon; double-click opens them; right-click → Simulate.
 - [x] Display blocks show their value on the canvas, updated live during the run.
+- [x] Each model opens in its own window in the desktop app; figures open as their own OS windows (maximize, Tile Figures).
+- [x] Double-click on empty canvas opens a quick block search; Space fits the diagram to the window.
 
 **Not in M1:** importing `.slx` files (zipped XML) is a later interoperability item. Code generation and hardware targets are out of scope.
 
