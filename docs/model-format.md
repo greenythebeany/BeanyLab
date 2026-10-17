@@ -73,6 +73,8 @@ One output can feed many inputs (fan-out): write one line per destination.
 
 `Goto` and `From` blocks with the same `tag` are connected without a line. Tags are global to the model and each tag has one Goto.
 
+A `BusSelector` reads a bus made by a `BusCreator`, possibly through Goto/From and subsystem ports. It picks elements by the names in the creator's `names` parameter and has one output per name in its `select` parameter.
+
 ## Results
 
 `sim('model')` returns (or assigns to `out` when called without an output):

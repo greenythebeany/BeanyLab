@@ -106,7 +106,7 @@ Because the language milestones now come later, the simulator only uses language
 - [x] **Continuous:** Integrator (limits, reset, external initial condition, state port), Derivative, Transfer Fcn, State-Space, Zero-Pole, Transport Delay, PID Controller.
 - [x] **Discrete:** Unit Delay, Discrete Transfer Fcn, Discrete State-Space, Discrete-Time Integrator, Zero-Order Hold, Discrete PID.
 - [x] **Nonlinear:** Saturation, Dead Zone, Relay, Rate Limiter, Quantizer, 1-D Lookup Table.
-- [ ] **Routing and logic:** done: Mux, Demux, Switch, Multiport Switch, Goto/From, Relational Operator, Logical Operator. Open: Bus Creator/Selector.
+- [x] **Routing and logic:** Mux, Demux, Switch, Multiport Switch, Goto/From, Bus Creator/Selector, Relational Operator, Logical Operator.
 - [x] **Structure:** Subsystem, Enabled Subsystem, Inport, Outport.
 - [x] **User code:** User Function block calls a `.m` function; Fcn block evaluates an expression in `u`.
 

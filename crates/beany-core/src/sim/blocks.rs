@@ -557,6 +557,18 @@ pub fn library() -> Vec<BlockDef> {
             vec![p("inputs", "Number of data inputs", "2")],
         ),
         d(
+            "BusCreator",
+            "Routing",
+            "Bundles its inputs into a bus with named elements.",
+            vec![t("names", "Element names (comma-separated)", "signal1, signal2")],
+        ),
+        d(
+            "BusSelector",
+            "Routing",
+            "Picks named elements out of a bus, one output each.",
+            vec![t("select", "Selected elements (comma-separated)", "signal1")],
+        ),
+        d(
             "Goto",
             "Routing",
             "Sends its input to every From block with the same tag, without a line.",
@@ -606,6 +618,14 @@ pub fn library() -> Vec<BlockDef> {
 }
 
 /// Port counts for a block with the given (unevaluated) parameters, as the editor shows them.
+/// Split a comma-separated list of bus element names.
+pub fn bus_names(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
+}
+
 pub fn ports_for(
     kind: &str,
     params: &BTreeMap<String, String>,
@@ -659,6 +679,12 @@ pub fn ports_for(
             (i + 1, o)
         }
         "MultiportSwitch" => (n("inputs", 2).max(1) + 1, 1),
+        "BusCreator" => (bus_names(&txt("names", "signal1, signal2")).len().max(1), 1),
+        // The engine adds one hidden input per bus element (see `_elements`).
+        "BusSelector" => (
+            1 + n("_elements", 0),
+            bus_names(&txt("select", "signal1")).len().max(1),
+        ),
         "Goto" => (1, 0),
         "From" => (0, 1),
         _ => (1, 1),
@@ -1121,7 +1147,15 @@ pub fn create(kind: &str, p: &Params, ports: (usize, usize)) -> SimResult<Box<dy
             }
             Box::new(Lookup { bp, tb })
         }
-        "Mux" => Box::new(Mux { n: ports.0 }),
+        "Mux" | "BusCreator" => Box::new(Mux { n: ports.0 }),
+        "BusSelector" => Box::new(BusSelect {
+            pick: p
+                .text("_pick")
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect(),
+            n_in: ports.0,
+        }),
         "Demux" => Box::new(Demux { n: ports.1 }),
         "Switch" => Box::new(Switch {
             mode: p.text("criteria"),
@@ -2399,6 +2433,30 @@ impl Block for Mux {
         y: &mut [Vec<f64>],
     ) -> SimResult<()> {
         y[0] = u.iter().flatten().copied().collect();
+        Ok(())
+    }
+}
+
+/// Copies the hidden element inputs the engine wired from the bus's creator.
+struct BusSelect {
+    pick: Vec<usize>,
+    n_in: usize,
+}
+impl Block for BusSelect {
+    fn ports(&self) -> (usize, usize) {
+        (self.n_in, self.pick.len())
+    }
+    fn output(
+        &mut self,
+        _: &mut Ctx,
+        _: f64,
+        _: &[f64],
+        u: &[Vec<f64>],
+        y: &mut [Vec<f64>],
+    ) -> SimResult<()> {
+        for (k, &e) in self.pick.iter().enumerate() {
+            y[k] = u[1 + e].clone();
+        }
         Ok(())
     }
 }

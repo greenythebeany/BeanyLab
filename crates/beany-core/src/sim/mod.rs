@@ -66,6 +66,71 @@ fn wire_goto_from(flat: &mut Flat) -> Result<(), SimError> {
     Ok(())
 }
 
+/// Give each Bus Selector a hidden input per element of the bus it reads, wired
+/// to the signal that feeds that element at the Bus Creator.
+fn wire_buses(flat: &mut Flat) -> Result<(), SimError> {
+    let feeder = |flat: &Flat, b: usize, p: usize| {
+        flat.lines
+            .iter()
+            .find(|(_, d)| *d == (b, p))
+            .map(|(s, _)| *s)
+    };
+    for i in 0..flat.blocks.len() {
+        if flat.blocks[i].kind != "BusSelector" {
+            continue;
+        }
+        let err = |m: String| SimError {
+            message: format!("{}: {}", flat.blocks[i].name, m),
+            block: Some(flat.blocks[i].id.clone()),
+        };
+        // Follow pass-through blocks (ports, Goto/From) back to the Bus Creator.
+        let mut src = feeder(flat, i, 0).ok_or_else(|| err("input is not connected.".into()))?;
+        for _ in 0..1000 {
+            let k = flat.blocks[src.0].kind.as_str();
+            if k == "BusCreator" {
+                break;
+            }
+            if !matches!(k, "Pass" | "Inport" | "Outport" | "Goto" | "From") {
+                return Err(err("input is not a bus from a Bus Creator.".into()));
+            }
+            src =
+                feeder(flat, src.0, 0).ok_or_else(|| err("bus source is not connected.".into()))?;
+        }
+        let creator = src.0;
+        let names = blocks::bus_names(
+            flat.blocks[creator]
+                .params
+                .get("names")
+                .map(String::as_str)
+                .unwrap_or("signal1, signal2"),
+        );
+        let select = blocks::bus_names(
+            flat.blocks[i]
+                .params
+                .get("select")
+                .map(String::as_str)
+                .unwrap_or("signal1"),
+        );
+        let mut pick = Vec::new();
+        for s in &select {
+            let e = names
+                .iter()
+                .position(|n| n == s)
+                .ok_or_else(|| err(format!("the bus has no element '{}'.", s)))?;
+            pick.push(e.to_string());
+        }
+        for e in 0..names.len() {
+            if let Some(s) = feeder(flat, creator, e) {
+                flat.lines.push((s, (i, 1 + e)));
+            }
+        }
+        let p = &mut flat.blocks[i].params;
+        p.insert("_elements".into(), names.len().to_string());
+        p.insert("_pick".into(), pick.join(","));
+    }
+    Ok(())
+}
+
 /// Inport/Outport counts of a subsystem's contents.
 pub fn subsystem_ports(m: &Model) -> (usize, usize) {
     let count = |k: &str| m.blocks.iter().filter(|b| b.kind == k).count();
@@ -488,6 +553,7 @@ pub fn simulate(
     };
     flatten(model, "", "", true, None, &mut flat)?;
     wire_goto_from(&mut flat)?;
+    wire_buses(&mut flat)?;
     let defs = blocks::library();
     let mut warnings = Vec::new();
 
@@ -518,6 +584,12 @@ pub fn simulate(
                 } else {
                     texts.insert(pd.name.to_string(), raw);
                 }
+            }
+        }
+        // Hidden parameters set by the engine itself.
+        for (k, v) in &fb.params {
+            if k.starts_with('_') {
+                texts.insert(k.clone(), v.clone());
             }
         }
         let params = Params::new(fb.name.clone(), values, texts);

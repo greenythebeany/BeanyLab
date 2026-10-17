@@ -341,6 +341,7 @@ fn every_library_block_runs() {
                 | "StopSimulation"
                 | "UserFunction"
                 | "FromWorkspace"
+                | "BusSelector"
                 | "From"
         )
     }) {
@@ -427,4 +428,41 @@ fn pause_holds_the_run_and_stop_ends_it() {
     assert!(ev.iter().any(|e| e == "sim-state true"), "{:?}", ev);
     assert!(ev.iter().any(|e| e.starts_with("sim-progress")));
     assert!(it.get_var("o").is_some());
+}
+
+#[test]
+fn bus_selector_picks_elements_by_name() {
+    let mut it = Interp::new();
+    it.eval_string(
+        "new_system('bus');\n\
+         add_block('Constant', 'bus/A', 'value', '3');\n\
+         add_block('Clock', 'bus/T');\n\
+         add_block('BusCreator', 'bus/Bus', 'names', 'speed, time');\n\
+         add_block('Goto', 'bus/Send', 'tag', 'B');\n\
+         add_block('From', 'bus/Recv', 'tag', 'B');\n\
+         add_block('BusSelector', 'bus/Sel', 'select', 'time, speed');\n\
+         add_block('ToWorkspace', 'bus/L1', 'variable', 't1');\n\
+         add_block('ToWorkspace', 'bus/L2', 'variable', 's2');\n\
+         add_line('bus', 'A/1', 'Bus/1');\n\
+         add_line('bus', 'T/1', 'Bus/2');\n\
+         add_line('bus', 'Bus/1', 'Send/1');\n\
+         add_line('bus', 'Recv/1', 'Sel/1');\n\
+         add_line('bus', 'Sel/1', 'L1/1');\n\
+         add_line('bus', 'Sel/2', 'L2/1');\n\
+         set_param('bus', 'StopTime', '2');\n\
+         o = sim('bus');",
+    )
+    .unwrap_or_else(|e| panic!("{}", e.report()));
+    let Some(Value::Struct(s)) = it.get_var("o") else {
+        panic!()
+    };
+    let t = s.get(0, "tout").unwrap().to_num().unwrap().data;
+    let t1 = s.get(0, "t1").unwrap().to_num().unwrap().data;
+    let s2 = s.get(0, "s2").unwrap().to_num().unwrap().data;
+    assert_eq!(t, t1);
+    assert!(s2.iter().all(|v| *v == 3.0));
+    let e = it
+        .eval_string("set_param('bus/Sel', 'select', 'nope'); sim('bus');")
+        .unwrap_err();
+    assert!(e.report().contains("no element 'nope'"), "{}", e.report());
 }

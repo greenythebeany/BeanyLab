@@ -120,7 +120,7 @@ function glyph(b: BlockSpec, display?: number[]): string {
     case "RateLimiter": return path(`M${sx(0)},${sy(0.1)} L${sx(0.6)},${sy(0.9)} H${sx(1)}`);
     case "Quantizer": return path(`M${sx(0)},${sy(0)} H${sx(0.2)} V${sy(0.25)} H${sx(0.4)} V${sy(0.5)} H${sx(0.6)} V${sy(0.75)} H${sx(0.8)} V${sy(1)} H${sx(1)}`);
     case "Lookup1D": return path(`M${sx(0)},${sy(0.1)} C${sx(0.4)},${sy(0.1)} ${sx(0.6)},${sy(0.9)} ${sx(1)},${sy(0.9)}`);
-    case "Mux": case "Demux": return "";
+    case "Mux": case "Demux": case "BusCreator": case "BusSelector": return "";
     case "Switch": return path(`M${w * 0.15},${h * 0.25} H${w * 0.45} L${w * 0.75},${cy} H${w * 0.9} M${w * 0.15},${h * 0.75} H${w * 0.45}`);
     case "RelationalOperator": return txt(P.op ?? "<=", 14);
     case "LogicalOperator": return txt(P.op ?? "AND", 11);
@@ -466,7 +466,7 @@ export class ModelEditor {
     if (!def) return;
     this.snapshot();
     const size: Record<string, [number, number]> = {
-      Sum: [40, 40], Gain: [60, 44], Mux: [10, 60], Demux: [10, 60], Scope: [56, 50], Inport: [40, 26], Outport: [40, 26],
+      Sum: [40, 40], Gain: [60, 44], Mux: [10, 60], Demux: [10, 60], BusCreator: [10, 60], BusSelector: [10, 60], Scope: [56, 50], Inport: [40, 26], Outport: [40, 26],
       TransferFcn: [100, 54], DiscreteTransferFcn: [110, 54], Fcn: [160, 44], Subsystem: [110, 70], EnabledSubsystem: [110, 70], Goto: [70, 30], From: [70, 30], MultiportSwitch: [50, 80], Display: [90, 34], Terminator: [30, 30],
     };
     const [w, h] = size[type] ?? [70, 50];
@@ -780,7 +780,7 @@ function shapeMarkup(b: BlockSpec): string {
   switch (b.type) {
     case "Gain": return `<path d="M0,0 L${w},${h / 2} L0,${h} z" class="bs"/>`;
     case "Sum": return `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" class="bs"/>`;
-    case "Mux": case "Demux": return `<rect width="${w}" height="${h}" class="bs bar"/>`;
+    case "Mux": case "Demux": case "BusCreator": case "BusSelector": return `<rect width="${w}" height="${h}" class="bs bar"/>`;
     case "Inport": case "Outport": return `<rect width="${w}" height="${h}" rx="${h / 2}" class="bs port"/>`;
     case "Subsystem": case "EnabledSubsystem": return `<rect width="${w}" height="${h}" rx="4" class="bs sub"/>`;
     case "Goto": return `<path d="M0,0 H${w - 12} L${w},${h / 2} L${w - 12},${h} H0 z" class="bs port"/>`;
