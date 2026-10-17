@@ -84,40 +84,47 @@ Moved here from after 1.0 on 2026-10-16 (decision D5). A visual editor for dynam
 Because the language milestones now come later, the simulator only uses language features that already work. Its blocks are implemented in Rust, except the user-code block. The ODE solvers it needs are built here and also exposed as `ode45`/`ode23` at the command line, which moves those two items out of M5.
 
 **Model format and engine**
-- [ ] **Open model format:** a `.bmdl` file (JSON inside a zip) holding blocks, parameters, connections, subsystems and solver settings. The format is versioned and documented in `docs/model-format.md`.
-- [ ] **Execution order:** sort blocks by data dependency, detect algebraic loops and report them clearly, and propagate signal sizes.
-- [ ] **Sample times:** continuous, discrete (per-block sample time and offset), inherited, and constant.
-- [ ] **Solvers:**
-  - Fixed step: Euler, Heun, RK4.
-  - Variable step: Dormand–Prince 5(4) (`ode45`-style) and Bogacki–Shampine 3(2) (`ode23`-style), with relative and absolute tolerances.
-  - A stiff solver (Rosenbrock or BDF) is planned for the same milestone if time allows; otherwise it moves to M5.
-- [ ] **Zero-crossing detection** for discontinuous blocks (Switch, Saturation, Relay, Sign) and for state resets.
-- [ ] **Model parameters** from the workspace (`K = 2` in the command window, `K` in a Gain block), checked before the simulation starts.
-- [ ] **Command-line control:** `out = sim('model')`, plus `open_system`/`new_system`, `set_param`/`get_param` for scripting and batch runs.
+- [x] **Open model format:** a `.bmdl` file holding blocks, parameters, connections, subsystems and solver settings. Plain JSON rather than JSON inside a zip, so models diff well in version control (changed 2026-10-17). Versioned.
+  - [ ] Document the format in `docs/model-format.md`.
+- [x] **Execution order:** sort blocks by data dependency, detect algebraic loops and report only the blocks on the loop. Signal widths flow dynamically.
+- [x] **Sample times:** continuous, discrete (per-block period), inherited, and constant.
+  - [ ] Per-block sample-time offsets in the dialogs.
+- [x] **Solvers:**
+  - Fixed step: Euler (ode1), Heun (ode2), RK4 (ode4).
+  - Variable step: Dormand–Prince 5(4) (ode45) and Bogacki–Shampine 3(2) (ode23), with relative and absolute tolerances.
+  - [ ] Stiff solver (Rosenbrock or BDF); moves to M5 if not done here.
+  - [ ] `ode45`/`ode23` as command-line functions.
+- [x] **Zero-crossing detection** by bisection, for Step, Ramp, Pulse, Switch, Saturation, Dead Zone, Relay, Abs, Sign, Relational Operator, integrator limits and integrator resets.
+- [x] **Model parameters** from the workspace (`K = 2` in the command window, `K` in a Gain block), evaluated before the simulation starts; errors name the block and parameter.
+- [x] **Command-line control:** `out = sim('model', 'StopTime', '5')`, `get_param`, `set_param`, `open_system`.
+  - [ ] `new_system`, `add_block`, `add_line` for building models from scripts.
 
-**Block library** (each block with a parameter dialog, an icon and conformance tests)
-- [ ] **Sources:** Constant, Step, Ramp, Sine Wave, Pulse Generator, Clock, Signal Generator, From Workspace, Random Number.
-- [ ] **Sinks:** Scope, To Workspace, Display, Terminator, Stop Simulation.
-- [ ] **Math:** Gain, Sum, Product, Abs, Sign, Math Function (exp/log/sqrt/...), Trigonometric Function, MinMax, Dot Product.
-- [ ] **Continuous:** Integrator (with limits and reset), Derivative, Transfer Fcn, State-Space, Zero-Pole, Transport Delay, PID Controller.
-- [ ] **Discrete:** Unit Delay, Discrete Transfer Fcn, Discrete State-Space, Discrete-Time Integrator, Zero-Order Hold, Discrete PID.
-- [ ] **Nonlinear:** Saturation, Dead Zone, Relay, Rate Limiter, Quantizer, 1-D Lookup Table.
-- [ ] **Routing and logic:** Mux, Demux, Switch, Multiport Switch, Relational Operator, Logical Operator, Goto/From, Bus Creator/Selector (basic).
-- [ ] **Structure:** Subsystem, Inport, Outport, Enabled Subsystem.
-- [ ] **User code:** a block whose output is a `.m` function of its inputs, run by the interpreter.
+**Block library** (each block with a parameter dialog and an icon; every block is exercised by `every_library_block_runs`)
+- [x] **Sources:** Constant, Step, Ramp, Sine Wave, Pulse Generator, Clock, Signal Generator, From Workspace, Random Number.
+- [x] **Sinks:** Scope, To Workspace, Display, Terminator, Stop Simulation, Outport (logged as `out.yout`).
+- [x] **Math:** Gain (scalar, vector, matrix), Sum, Product, Bias, Abs, Sign, Math Function, Trigonometric Function, MinMax, Dot Product, Fcn (expression).
+- [x] **Continuous:** Integrator (limits, reset, external initial condition, state port), Derivative, Transfer Fcn, State-Space, Zero-Pole, Transport Delay, PID Controller.
+- [x] **Discrete:** Unit Delay, Discrete Transfer Fcn, Discrete State-Space, Discrete-Time Integrator, Zero-Order Hold, Discrete PID.
+- [x] **Nonlinear:** Saturation, Dead Zone, Relay, Rate Limiter, Quantizer, 1-D Lookup Table.
+- [ ] **Routing and logic:** done: Mux, Demux, Switch, Relational Operator, Logical Operator. Open: Multiport Switch, Goto/From, Bus Creator/Selector.
+- [ ] **Structure:** done: Subsystem, Inport, Outport. Open: Enabled Subsystem.
+- [x] **User code:** User Function block calls a `.m` function; Fcn block evaluates an expression in `u`.
 
 **Editor (in the desktop app)**
-- [ ] A model editor tab: block library browser, drag-and-drop canvas, ports, signal lines with routing and branch points, zoom and pan, multi-select, copy/paste, undo/redo.
-- [ ] Double-click a block to edit its parameters; double-click a subsystem to open it; breadcrumb navigation.
-- [ ] Run, Pause, Stop, stop time and solver settings in the toolstrip; progress and errors linked to the block that caused them.
-- [ ] **Scope window:** live-updating traces during simulation, multiple axes, autoscale, cursors.
-- [ ] Logged signals appear in the workspace as `out`, with times and values.
-- [ ] Current Folder shows `.bmdl` files with the model icon; double-click opens them.
+- [x] Model editor tab: searchable block library, drag-and-drop canvas, ports, orthogonal signal lines with fan-out, zoom and pan, multi-select, copy/paste, undo/redo, delete.
+- [x] Double-click a block to edit its parameters; double-click a subsystem to open it; breadcrumb navigation.
+- [x] Run and Stop, stop time, solver choice and solver settings; errors highlight the block that caused them.
+  - [ ] Pause and resume.
+- [x] **Scope window:** traces update during the simulation in the desktop app, autoscale, zoom, pan and image export.
+  - [ ] Multiple axes per scope, cursors.
+- [x] Logged signals appear in the workspace as `out` (`out.tout`, To Workspace variables, `out.yout`).
+- [x] Current Folder shows `.bmdl` files with the model icon; double-click opens them; right-click → Simulate.
+- [ ] Display blocks show their final value on the canvas (done); live values during the run (open).
 
 **Not in M1:** importing `.slx` files (zipped XML) is a later interoperability item. Code generation and hardware targets are out of scope.
 
 **Exit:**
-- **Reference-model suite**, written by us with known analytic or independently computed answers, all within tolerance:
+- [x] **Reference-model suite** (`crates/beany-core/tests/sim.rs`, models in `examples/models`), written by us with known analytic or independently computed answers, all within tolerance:
   - first-order lag step response
   - mass–spring–damper
   - closed-loop PID speed control
@@ -125,8 +132,8 @@ Because the language milestones now come later, the simulator only uses language
   - bouncing ball (zero-crossing and state reset)
   - Van der Pol oscillator
   - a model using the user-code block
-- A model with an algebraic loop produces a clear error that points at the loop.
-- Three people who haven't seen the editor build and run a feedback-control model from scratch, with no blocking issues.
+- [x] A model with an algebraic loop produces a clear error that points at the loop.
+- [ ] Three people who haven't seen the editor build and run a feedback-control model from scratch, with no blocking issues.
 
 ## M2 — Language completeness (6–8 weeks)
 
@@ -251,6 +258,7 @@ Ordered by how often course and engineering code uses them:
 |---|---|---|---|
 | 2026-10-15 | v0.1 | not measured yet | Course files cv2, cv3, cv4 run. |
 | 2026-10-16 | M0 in progress | 2 / 2 (corpus too small to mean much) | License, docs, CI, conformance runner (13/13), first commit. |
+| 2026-10-17 | M1 in progress | 2 / 2 | Repo public. Simulator engine, 54 blocks, editor, scopes; reference-model suite 11/11. |
 
 ## Effort estimate
 

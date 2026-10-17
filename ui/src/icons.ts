@@ -80,7 +80,7 @@ export function fileIcon(name: string, isDir: boolean): string {
   const lower = name.toLowerCase();
   if (lower.endsWith(".m")) return icon("script", 16);
   if (lower.endsWith(".mat") || lower.endsWith(".csv") || lower.endsWith(".txt") || lower.endsWith(".dat")) return icon("data", 16);
-  if (lower.endsWith(".slx") || lower.endsWith(".mdl")) return icon("model", 16);
+  if (lower.endsWith(".bmdl") || lower.endsWith(".slx") || lower.endsWith(".mdl")) return icon("model", 16);
   return icon("file", 16);
 }
 

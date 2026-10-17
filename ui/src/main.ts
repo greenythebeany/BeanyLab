@@ -6,6 +6,8 @@ import type { EvalResult, FileEntry, Figure, VarInfo, VarDetail } from "./api";
 import { icon, fileIcon, APP_ICON } from "./icons";
 import { registerLanguage, LANG, sectionAt } from "./mlang";
 import * as plots from "./plots";
+import { ModelEditor, emptyModel } from "./model";
+import type { BlockDef, BlockSpec, Model } from "./model";
 
 (self as any).MonacoEnvironment = { getWorker: () => new EditorWorker() };
 registerLanguage(monaco);
@@ -28,7 +30,20 @@ const navFwd: string[] = [];
 let wsVars: VarInfo[] = [];
 const wsSelected = new Set<string>();
 
-interface Tab { id: number; kind: "code" | "var"; path: string | null; name: string; model?: monaco.editor.ITextModel; saved?: string; varName?: string }
+interface Tab {
+  id: number;
+  kind: "code" | "var" | "model";
+  path: string | null;
+  name: string;
+  model?: monaco.editor.ITextModel;
+  saved?: string;
+  varName?: string;
+  /** Block-diagram editor and its container, for model tabs. */
+  me?: ModelEditor;
+  host?: HTMLElement;
+}
+let blockLib: BlockDef[] = [];
+let untitledModelSeq = 1;
 const tabs: Tab[] = [];
 let activeTab: Tab | null = null;
 let tabSeq = 1;
@@ -50,6 +65,7 @@ const RIBBON: Record<string, Group[]> = {
     { label: "File", items: [
       { label: "New Script", icon: "newScript", run: () => newScript(), title: "New script (Ctrl+N)" },
       { label: "New Function", icon: "newFunction", run: () => newFunction() },
+      { label: "New Model", icon: "model", run: () => newModel(), title: "New block-diagram model" },
       { label: "Open", icon: "open", run: () => openFileDialog(), title: "Open file (Ctrl+O)" },
     ] },
     { label: "Variable", items: [
@@ -60,7 +76,7 @@ const RIBBON: Record<string, Group[]> = {
       ],
     ] },
     { label: "Code", items: [
-      { label: "Run", icon: "run", run: () => (activeTab?.kind === "code" ? runActive() : runFileDialog()), title: "Run the open file (F5)" },
+      { label: "Run", icon: "run", run: () => (activeTab?.kind === "code" || activeTab?.kind === "model" ? runActive() : runFileDialog()), title: "Run the open file or model (F5)" },
       [
         { label: "Clear Commands", icon: "terminal", small: true, run: () => clearCommand() },
         { label: "Run File…", icon: "open", small: true, run: () => runFileDialog(), title: "Choose a .m file to run" },
@@ -101,6 +117,7 @@ const RIBBON: Record<string, Group[]> = {
   EDITOR: [
     { label: "File", items: [
       { label: "New", icon: "newScript", run: () => newScript() },
+      { label: "New Model", icon: "model", run: () => newModel() },
       { label: "Open", icon: "open", run: () => openFileDialog() },
       { label: "Save", icon: "save", run: () => saveActive(false), title: "Save (Ctrl+S)" },
       [
@@ -568,9 +585,10 @@ function renderTabs() {
   for (const t of tabs) {
     const b = document.createElement("div");
     b.className = "etab" + (t === activeTab ? " active" : "");
-    const dirty = t.kind === "code" && t.model && t.model.getValue() !== t.saved;
-    b.innerHTML = `${t.kind === "var" ? icon("table", 14) : icon("script", 14)}<span></span>${dirty ? `<span class="dot" title="Unsaved changes"></span>` : ""}<span class="x" title="Close">${icon("close", 13)}</span>`;
-    (b.children[1] as HTMLElement).textContent = t.kind === "var" ? t.name : t.name;
+    const dirty = isDirty(t);
+    const ic = t.kind === "var" ? icon("table", 14) : t.kind === "model" ? icon("model", 14) : icon("script", 14);
+    b.innerHTML = `${ic}<span></span>${dirty ? `<span class="dot" title="Unsaved changes"></span>` : ""}<span class="x" title="Close">${icon("close", 13)}</span>`;
+    (b.children[1] as HTMLElement).textContent = t.name;
     b.title = t.path ?? t.name;
     b.onclick = (e) => { if ((e.target as HTMLElement).closest(".x")) closeTab(t); else activate(t); };
     b.onauxclick = (e) => { if (e.button === 1) closeTab(t); };
@@ -601,11 +619,26 @@ function renderTabs() {
   $("editor-empty").hidden = !empty;
   $("editor-host").hidden = empty || activeTab?.kind !== "code";
   $("var-host").hidden = empty || activeTab?.kind !== "var";
+  $("model-hosts").hidden = empty || activeTab?.kind !== "model";
+  for (const t of tabs) if (t.host) t.host.hidden = t !== activeTab;
   $("title-file").textContent = activeTab ? (activeTab.path ?? activeTab.name) : "Command Window";
+}
+
+function isDirty(t: Tab): boolean {
+  if (t.kind === "code") return !!t.model && t.model.getValue() !== t.saved;
+  if (t.kind === "model") return !!t.me && JSON.stringify(t.me.root) !== t.saved;
+  return false;
 }
 
 function activate(t: Tab) {
   activeTab = t;
+  if (t.kind === "model") {
+    renderTabs();
+    t.me!.render();
+    $("status-pos").textContent = "";
+    t.me!.focus();
+    return;
+  }
   if (t.kind === "code") {
     editor.setModel(t.model!);
     renderTabs();
@@ -638,10 +671,11 @@ let secTimer = 0;
 function decorateSectionsDebounced() { clearTimeout(secTimer); secTimer = window.setTimeout(decorateSections, 200); }
 
 function closeTab(t: Tab) {
-  if (t.kind === "code" && t.model!.getValue() !== t.saved && !confirm(`Save changes to ${t.name} before closing?\n\nOK = close without saving · Cancel = keep open`)) return;
+  if (isDirty(t) && !confirm(`${t.name} has unsaved changes. Close it anyway?\n\nOK = close without saving · Cancel = keep open`)) return;
   const i = tabs.indexOf(t);
   tabs.splice(i, 1);
   t.model?.dispose();
+  t.host?.remove();
   if (activeTab === t) {
     activeTab = tabs[i] ?? tabs[i - 1] ?? null;
     if (activeTab) activate(activeTab);
@@ -659,9 +693,70 @@ function newFunction() {
   newScript(`function out = ${name}(in)\n% ${name.toUpperCase()}  Describe what this function does.\n%   out = ${name}(in) returns ...\n\nout = in;\n\nend\n`);
 }
 
+// ---------------------------------------------------------------- models
+
+function newModelTab(path: string | null, name: string, model: Model) {
+  const host = document.createElement("div");
+  host.className = "model-host";
+  $("model-hosts").appendChild(host);
+  const t: Tab = { id: tabSeq++, kind: "model", path, name, host, saved: path ? JSON.stringify(model) : "" };
+  t.me = new ModelEditor(host, model, {
+    library: blockLib,
+    ports: (blocks: BlockSpec[]) => call<[number, number][]>("block_ports", { blocks }),
+    onChange: () => renderTabsDebounced(),
+    run: () => runModel(t),
+    stop: () => stop(),
+    save: () => { activate(t); saveActive(false); },
+    toast,
+  });
+  tabs.push(t);
+  activate(t);
+  return t;
+}
+
+function newModel() {
+  const name = `untitled${untitledModelSeq > 1 ? untitledModelSeq : ""}`;
+  untitledModelSeq++;
+  newModelTab(null, `${name}.bmdl`, emptyModel(name));
+}
+
+function runModel(t: Tab): Promise<void> {
+  const label = t.name.replace(/\.bmdl$/i, "");
+  addHistory(`sim('${label}')`);
+  return new Promise((resolve) => enqueue(async () => {
+    appendText(`>> sim('${label}')\n`, "echo");
+    try {
+      t.me!.setError(null);
+      const r = await call<{ result: EvalResult; report: { displays: { id: string; value: number[] }[]; error_block: string | null; stop_time: number } }>("sim", { model: t.me!.root, label });
+      handleResult(r.result);
+      t.me!.setDisplays(r.report.displays);
+      if (r.report.error_block) t.me!.setError(r.report.error_block);
+      $("status-text").textContent = r.result.error ? "Simulation failed" : `Simulation finished at t = ${+r.report.stop_time.toPrecision(6)}`;
+    } finally {
+      resolve();
+    }
+  }));
+}
+
 async function openPath(path: string) {
-  const existing = tabs.find((t) => t.kind === "code" && t.path && samePath(t.path, path));
+  const existing = tabs.find((t) => (t.kind === "code" || t.kind === "model") && t.path && samePath(t.path, path));
   if (existing) { activate(existing); return; }
+  if (/\.bmdl$/i.test(path)) {
+    try {
+      const text: string = await call("read", { path });
+      const model = JSON.parse(text) as Model;
+      model.solver = { ...emptyModel("").solver, ...(model.solver ?? {}) };
+      model.lines = model.lines ?? [];
+      const fill = (m: Model) => { for (const b of m.blocks) { b.w = b.w ?? 70; b.h = b.h ?? 50; b.params = b.params ?? {}; b.name = b.name || b.type; if (b.system) { b.system.lines = b.system.lines ?? []; fill(b.system); } } };
+      fill(model);
+      const t = newModelTab(path, baseName(path), model);
+      t.saved = JSON.stringify(t.me!.root);
+      renderTabs();
+    } catch (e) {
+      toast(`Could not open model: ${e}`);
+    }
+    return;
+  }
   try {
     const text: string = await call("read", { path });
     newTab(path, baseName(path), text.replace(/\r\n/g, "\n"));
@@ -677,15 +772,17 @@ async function openFileDialog() {
 
 async function saveActive(as: boolean): Promise<boolean> {
   const t = activeTab;
-  if (!t || t.kind !== "code") return false;
+  if (!t || (t.kind !== "code" && t.kind !== "model")) return false;
+  const ext = t.kind === "model" ? ".bmdl" : ".m";
   let path = t.path;
   if (!path || as) {
-    const suggested = joinPath(cwd, guessName(t));
+    const suggested = joinPath(cwd, t.kind === "model" ? t.name : guessName(t));
     path = await pickSaveFile(suggested);
     if (!path) return false;
-    if (!/\.m$/i.test(path)) path += ".m";
+    if (!path.toLowerCase().endsWith(ext)) path += ext;
   }
-  const text = t.model!.getValue();
+  if (t.kind === "model") t.me!.root.name = baseName(path).replace(/\.bmdl$/i, "");
+  const text = t.kind === "model" ? JSON.stringify(t.me!.root, null, 2) + "\n" : t.model!.getValue();
   try {
     await call("write", { path, content: text });
   } catch (e) {
@@ -694,7 +791,7 @@ async function saveActive(as: boolean): Promise<boolean> {
   }
   t.path = path;
   t.name = baseName(path);
-  t.saved = text;
+  t.saved = t.kind === "model" ? JSON.stringify(t.me!.root) : text;
   renderTabs();
   refreshFiles();
   $("status-text").textContent = `Saved ${t.name}`;
@@ -709,6 +806,7 @@ function guessName(t: Tab): string {
 
 async function runActive() {
   const t = activeTab;
+  if (t?.kind === "model") return runModel(t);
   if (!t || t.kind !== "code") return;
   if (t.model!.getValue() !== t.saved || !t.path) {
     const ok = await saveActive(false);
@@ -765,7 +863,7 @@ async function refreshFiles() {
   el.innerHTML = "";
   for (const f of entries) {
     const row = document.createElement("div");
-    row.className = "frow" + (f.name.toLowerCase().endsWith(".m") ? " code" : "");
+    row.className = "frow" + (/\.(m|bmdl)$/i.test(f.name) ? " code" : "");
     row.innerHTML = `${fileIcon(f.name, f.is_dir)}<span class="name"></span>`;
     (row.querySelector(".name") as HTMLElement).textContent = f.name;
     row.title = f.path;
@@ -784,6 +882,7 @@ async function refreshFiles() {
       if (f.is_dir) items.push({ label: "Open folder", icon: "open", run: () => setCwd(f.path) });
       else items.push({ label: "Open", icon: "open", run: () => openPath(f.path) });
       if (/\.m$/i.test(f.name)) items.push({ label: "Run", icon: "run", run: () => runPath(f.path) });
+      if (/\.bmdl$/i.test(f.name)) items.push({ label: "Simulate", icon: "run", run: () => { const c = `sim('${f.name.replace(/\.bmdl$/i, "")}')`; addHistory(c); execute(c, true); } });
       if (f.is_dir) items.push({ label: "Add to Path", icon: "path", run: () => execute(`addpath('${f.path}')`, true) });
       menu(e, items);
     };
@@ -1038,10 +1137,11 @@ function sameDir(a: string, b: string) { return norm(a) === norm(b); }
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") { e.preventDefault(); newScript(); }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); openFileDialog(); }
-  else if (e.key === "F5" && activeTab?.kind === "code") { e.preventDefault(); runActive(); }
+  else if (e.key === "F5" && (activeTab?.kind === "code" || activeTab?.kind === "model")) { e.preventDefault(); runActive(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s" && activeTab?.kind === "model") { e.preventDefault(); saveActive(false); }
 });
 window.addEventListener("beforeunload", (e) => {
-  if (tabs.some((t) => t.kind === "code" && t.model!.getValue() !== t.saved)) { e.preventDefault(); }
+  if (tabs.some(isDirty)) { e.preventDefault(); }
 });
 
 function wireChrome() {
@@ -1075,6 +1175,7 @@ async function boot() {
     (f) => applyFigures(f.figures, f.closed),
   );
   try {
+    blockLib.push(...(await call<BlockDef[]>("block_library")));
     const st: any = await call("state");
     cwd = st.cwd;
     $<HTMLInputElement>("cwd-input").value = cwd;

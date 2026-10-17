@@ -624,9 +624,15 @@ fn folder_paths_resolve_dot_segments() {
     use beany_core::interp::clean_path;
     use std::path::Path;
     let base = Path::new("/home/u/proj");
-    assert_eq!(clean_path(base, "/mnt/share/course"), Path::new("/mnt/share/course"));
+    assert_eq!(
+        clean_path(base, "/mnt/share/course"),
+        Path::new("/mnt/share/course")
+    );
     assert_eq!(clean_path(base, "../other"), Path::new("/home/u/other"));
-    assert_eq!(clean_path(base, "./sub/./x"), Path::new("/home/u/proj/sub/x"));
+    assert_eq!(
+        clean_path(base, "./sub/./x"),
+        Path::new("/home/u/proj/sub/x")
+    );
     assert_eq!(clean_path(Path::new("/"), ".."), Path::new("/"));
 }
 

@@ -233,6 +233,8 @@ fn algebraic_loop_is_reported() {
         "{}",
         e.message
     );
+    // The Terminator sits after the loop, not in it.
+    assert!(!e.message.contains("End"), "{}", e.message);
 }
 
 #[test]

@@ -316,6 +316,65 @@ impl Engine {
     }
 }
 
+/// Nodes in strongly connected components that contain a cycle (Tarjan's algorithm).
+fn cycle_members(succ: &[Vec<usize>], n: usize) -> Vec<usize> {
+    struct T<'a> {
+        succ: &'a [Vec<usize>],
+        index: Vec<Option<usize>>,
+        low: Vec<usize>,
+        on: Vec<bool>,
+        stack: Vec<usize>,
+        next: usize,
+        out: Vec<usize>,
+    }
+    fn visit(t: &mut T, v: usize) {
+        t.index[v] = Some(t.next);
+        t.low[v] = t.next;
+        t.next += 1;
+        t.stack.push(v);
+        t.on[v] = true;
+        for &w in &t.succ[v] {
+            match t.index[w] {
+                None => {
+                    visit(t, w);
+                    t.low[v] = t.low[v].min(t.low[w]);
+                }
+                Some(iw) if t.on[w] => t.low[v] = t.low[v].min(iw),
+                _ => {}
+            }
+        }
+        if Some(t.low[v]) == t.index[v] {
+            let mut comp = Vec::new();
+            while let Some(w) = t.stack.pop() {
+                t.on[w] = false;
+                comp.push(w);
+                if w == v {
+                    break;
+                }
+            }
+            if comp.len() > 1 || t.succ[v].contains(&v) {
+                t.out.extend(comp);
+            }
+        }
+    }
+    let mut t = T {
+        succ,
+        index: vec![None; n],
+        low: vec![0; n],
+        on: vec![false; n],
+        stack: Vec::new(),
+        next: 0,
+        out: Vec::new(),
+    };
+    for v in 0..n {
+        if t.index[v].is_none() {
+            visit(&mut t, v);
+        }
+    }
+    t.out.sort();
+    t.out
+}
+
 fn crossed(z0: f64, z1: f64) -> Option<bool> {
     if z0 < 0.0 && z1 >= 0.0 {
         Some(true)
@@ -473,16 +532,13 @@ pub fn simulate(
         }
     }
     if order.len() < n {
-        let in_loop: Vec<String> = (0..n)
-            .filter(|b| indeg[*b] > 0)
-            .map(|b| flat.blocks[b].name.clone())
-            .collect();
-        let first = (0..n)
-            .find(|b| indeg[*b] > 0)
-            .map(|b| flat.blocks[b].id.clone());
+        // Report only blocks that are on a cycle, not ones merely downstream of it.
+        let cyc = cycle_members(&succ, n);
+        let in_loop: Vec<String> = cyc.iter().map(|b| flat.blocks[*b].name.clone()).collect();
+        let first = cyc.first().map(|b| flat.blocks[*b].id.clone());
         return Err(SimError {
             message: format!(
-                "Algebraic loop: these blocks feed each other with no delay or integrator in between: {}. Break the loop with an Integrator, Unit Delay or Memory-like block.",
+                "Algebraic loop: these blocks feed each other with no delay or integrator in between: {}. Break the loop with an Integrator, Unit Delay or Transport Delay block.",
                 in_loop.join(", ")
             ),
             block: first,
