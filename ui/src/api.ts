@@ -185,7 +185,7 @@ export async function pickOpenFile(current: string): Promise<string | null> {
 export async function pickSaveFile(suggested: string): Promise<string | null> {
   if (tauri) {
     const d = await import("@tauri-apps/plugin-dialog");
-    const r = await d.save({ defaultPath: suggested, filters: /.bmdl$/i.test(suggested) ? [{ name: "Model files", extensions: ["bmdl"] }] : [{ name: "Code files", extensions: ["m"] }] });
+    const r = await d.save({ defaultPath: suggested, filters: /\.bmdl$/i.test(suggested) ? [{ name: "Model files", extensions: ["bmdl"] }] : [{ name: "Code files", extensions: ["m"] }] });
     return r ?? null;
   }
   return window.prompt("Save as", suggested);
