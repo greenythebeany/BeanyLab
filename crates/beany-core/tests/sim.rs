@@ -501,3 +501,52 @@ fn sample_time_offset_shifts_the_hits() {
         .eval_string("set_param('off/H', 'ts', '[1 2]'); sim('off');")
         .is_err());
 }
+
+#[test]
+fn slx_export_round_trips_through_import() {
+    use beany_core::sim::run::{read_model_file, write_model_file};
+    let dir = std::env::temp_dir().join(format!("beany_slx_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in [
+        "pid_control",
+        "mass_spring_damper",
+        "discrete_filter",
+        "subsystem_demo",
+        "enabled_counter",
+    ] {
+        let (m, _) = read_model_file(&models_dir().join(format!("{}.bmdl", name))).unwrap();
+        let file = dir.join(format!("{}.slx", name));
+        write_model_file(&file, &m).unwrap();
+        let (back, warnings) = read_model_file(&file).unwrap();
+        assert!(warnings.is_empty(), "{}: {:?}", name, warnings);
+        assert_eq!(back.solver.stop_time, m.solver.stop_time);
+        // Both versions simulate to the same logged signals.
+        let mut a = Interp::new();
+        a.cwd = models_dir();
+        let (va, _) = beany_core::sim::run::run(&mut a, &m, name)
+            .unwrap_or_else(|e| panic!("{}", e.0.message));
+        let mut b = Interp::new();
+        b.cwd = models_dir();
+        let (vb, _) = beany_core::sim::run::run(&mut b, &back, name)
+            .unwrap_or_else(|e| panic!("{}", e.0.message));
+        let (Value::Struct(sa), Value::Struct(sb)) = (va, vb) else {
+            panic!()
+        };
+        // PID blocks are written as an equivalent transfer function, so steps can differ
+        // slightly; compare the end values of every logged signal.
+        for f in sa.keys.clone() {
+            let ya = sa.get(0, &f).unwrap().to_num().unwrap().data;
+            let yb = sb.get(0, &f).unwrap().to_num().unwrap().data;
+            let (la, lb) = (*ya.last().unwrap(), *yb.last().unwrap());
+            assert!(
+                (la - lb).abs() <= 1e-3 * la.abs().max(1.0),
+                "{} {}: {} vs {}",
+                name,
+                f,
+                la,
+                lb
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

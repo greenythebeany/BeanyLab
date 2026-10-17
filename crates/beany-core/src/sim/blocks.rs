@@ -30,7 +30,8 @@ pub enum LogKind {
     Scope {
         separate: bool,
     },
-    ToWorkspace(String),
+    /// Variable name, and whether it is saved as a structure with time.
+    ToWorkspace(String, bool),
     Outport(usize),
     Display,
 }
@@ -232,7 +233,15 @@ pub fn library() -> Vec<BlockDef> {
             "ToWorkspace",
             "Sinks",
             "Saves its input to out.<name>.",
-            vec![t("variable", "Variable name", "simout")],
+            vec![
+                t("variable", "Variable name", "simout"),
+                c(
+                    "format",
+                    "Save format",
+                    "Array",
+                    "choice:Array|Structure With Time",
+                ),
+            ],
         ),
         d(
             "Display",
@@ -753,6 +762,9 @@ fn first(u: &[Vec<f64>]) -> &[f64] {
 
 /// Elementwise combine with scalar expansion.
 fn zip2(a: &[f64], b: &[f64], f: impl Fn(f64, f64) -> f64) -> Vec<f64> {
+    if a.is_empty() || b.is_empty() {
+        return Vec::new();
+    }
     let n = a.len().max(b.len());
     (0..n)
         .map(|i| {
@@ -898,7 +910,7 @@ pub fn create(kind: &str, p: &Params, ports: (usize, usize)) -> SimResult<Box<dy
             }
             Box::new(Sink {
                 n: 1,
-                kind: LogKind::ToWorkspace(v),
+                kind: LogKind::ToWorkspace(v, p.text("format") == "Structure With Time"),
             })
         }
         "Display" => Box::new(Sink {

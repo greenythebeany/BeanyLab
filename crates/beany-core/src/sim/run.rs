@@ -26,25 +26,68 @@ pub struct RunReport {
     pub stop_time: f64,
 }
 
-/// Find `name` or `name.bmdl` in the current folder or on the path.
+/// Model file extensions, in lookup order.
+pub const MODEL_EXTS: [&str; 3] = ["bmdl", "slx", "mdl"];
+
+fn has_model_ext(name: &str) -> bool {
+    let l = name.to_lowercase();
+    MODEL_EXTS.iter().any(|e| l.ends_with(&format!(".{}", e)))
+}
+
+/// Find `name`, or `name` with a model extension, in the current folder or on the path.
 pub fn resolve_model(it: &Interp, name: &str) -> Option<PathBuf> {
-    let with_ext = if name.to_lowercase().ends_with(".bmdl") {
-        name.to_string()
+    let candidates: Vec<String> = if has_model_ext(name) {
+        vec![name.to_string()]
     } else {
-        format!("{}.bmdl", name)
+        MODEL_EXTS
+            .iter()
+            .map(|e| format!("{}.{}", name, e))
+            .collect()
     };
-    let direct = PathBuf::from(&with_ext);
-    if direct.is_absolute() && direct.is_file() {
-        return Some(direct);
+    for c in &candidates {
+        let direct = PathBuf::from(c);
+        if direct.is_absolute() && direct.is_file() {
+            return Some(direct);
+        }
+        let here = it.cwd.join(c);
+        if here.is_file() {
+            return Some(here);
+        }
+        if let Some(p) = it.path.iter().map(|d| d.join(c)).find(|p| p.is_file()) {
+            return Some(p);
+        }
     }
-    let here = it.cwd.join(&with_ext);
-    if here.is_file() {
-        return Some(here);
+    None
+}
+
+/// Read a model file of any supported format. Imported formats also return warnings.
+pub fn read_model_file(p: &std::path::Path) -> Result<(Model, Vec<String>), String> {
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if ext == "slx" || ext == "mdl" {
+        return super::import::import_file(p).map_err(|e| format!("{}: {}", p.display(), e));
     }
-    it.path
-        .iter()
-        .map(|d| d.join(&with_ext))
-        .find(|p| p.is_file())
+    let text = std::fs::read_to_string(p)
+        .map_err(|e| format!("Unable to read '{}': {}", p.display(), e))?;
+    Ok((Model::parse(&text)?, Vec::new()))
+}
+
+/// Write a model in the format its extension names (.bmdl or .slx).
+pub fn write_model_file(p: &std::path::Path, m: &Model) -> Result<(), String> {
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let bytes = match ext.as_str() {
+        "slx" => super::export::to_slx(m)?,
+        "mdl" => {
+            return Err("Saving in the .mdl format is not supported; use .slx or .bmdl.".into())
+        }
+        _ => m.to_json().into_bytes(),
+    };
+    std::fs::write(p, bytes).map_err(|e| format!("Unable to save '{}': {}", p.display(), e))
 }
 
 /// Block type from a library path such as "beany/Continuous/Transfer Fcn" or "Gain".
@@ -79,7 +122,13 @@ pub fn block_type_from(src: &str) -> Option<&'static str> {
 /// The model's base name: "dir/pid.bmdl" -> "pid".
 fn model_key(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    base.strip_suffix(".bmdl").unwrap_or(base).to_string()
+    for e in MODEL_EXTS {
+        let l = base.to_lowercase();
+        if l.ends_with(&format!(".{}", e)) {
+            return base[..base.len() - e.len() - 1].to_string();
+        }
+    }
+    base.to_string()
 }
 
 /// A model open in memory (from new_system/load_system), else loaded from its file.
@@ -99,20 +148,17 @@ fn put_model(it: &mut Interp, name: &str, model: Model, file: Option<PathBuf>) -
         return Ok(());
     }
     let file = file.ok_or_else(|| merr!("Model '{}' has no file; use save_system.", name))?;
-    std::fs::write(&file, model.to_json())
-        .map_err(|e| merr!("Unable to save '{}': {}", file.display(), e))
+    write_model_file(&file, &model).map_err(MError::new)
 }
 
 pub fn load_model(it: &Interp, name: &str) -> MResult<(Model, PathBuf)> {
     let p = resolve_model(it, name).ok_or_else(|| {
         merr!(
-            "Model '{}' not found. Model files use the .bmdl extension.",
+            "Model '{}' not found. Model files use the .bmdl, .slx or .mdl extension.",
             name
         )
     })?;
-    let text = std::fs::read_to_string(&p)
-        .map_err(|e| merr!("Unable to read '{}': {}", p.display(), e))?;
-    let model = Model::parse(&text).map_err(MError::new)?;
+    let (model, _warnings) = read_model_file(&p).map_err(MError::new)?;
     Ok((model, p))
 }
 
@@ -258,8 +304,27 @@ pub fn run(
     let displays = display_values(&out.logs);
     for log in &out.logs {
         match &log.kind {
-            LogKind::ToWorkspace(var) => {
-                fields.push((var.clone(), rows_to_matrix(&log.data[0], n)))
+            LogKind::ToWorkspace(var, with_time) => {
+                let values = rows_to_matrix(&log.data[0], n);
+                let v = if *with_time {
+                    let width = log.data[0].iter().map(|r| r.len()).max().unwrap_or(1);
+                    let signals = StructArr::scalar(vec![
+                        ("values".into(), values),
+                        ("dimensions".into(), Value::num(width as f64)),
+                        ("label".into(), Value::chars("")),
+                    ]);
+                    Value::Struct(StructArr::scalar(vec![
+                        (
+                            "time".into(),
+                            Value::col(out.tout[..n.min(out.tout.len())].to_vec()),
+                        ),
+                        ("signals".into(), Value::Struct(signals)),
+                        ("blockName".into(), Value::chars(&log.name)),
+                    ]))
+                } else {
+                    values
+                };
+                fields.push((var.clone(), v))
             }
             LogKind::Outport(k) => outports.push((*k, log)),
             LogKind::Display | LogKind::Scope { .. } => {}
@@ -491,7 +556,7 @@ pub fn register(it: &mut Interp) {
         let file = match a.get(1) {
             Some(v) => {
                 let t = v.text()?;
-                let t = if t.to_lowercase().ends_with(".bmdl") {
+                let t = if has_model_ext(&t) {
                     t
                 } else {
                     format!("{}.bmdl", t)
@@ -500,8 +565,7 @@ pub fn register(it: &mut Interp) {
             }
             None => p.unwrap_or_else(|| it.cwd.join(format!("{}.bmdl", key))),
         };
-        std::fs::write(&file, m.to_json())
-            .map_err(|e| merr!("Unable to save '{}': {}", file.display(), e))?;
+        write_model_file(&file, &m).map_err(MError::new)?;
         it.open_models.insert(key, (m, Some(file)));
         Ok(vec![])
     });

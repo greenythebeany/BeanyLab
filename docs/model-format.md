@@ -1,5 +1,7 @@
 # BeanyLab model format (`.bmdl`), version 1
 
+BeanyLab also opens `.slx` and `.mdl` files and saves `.slx`; those are converted to and from the structure below.
+
 A model is a UTF-8 JSON document. It's plain text on purpose: models diff and merge well in version control, and other tools can generate them.
 
 ## Top level

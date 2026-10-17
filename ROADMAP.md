@@ -124,7 +124,10 @@ Because the language milestones now come later, the simulator only uses language
 - [x] Each model opens in its own window in the desktop app; figures open as their own OS windows (maximize, Tile Figures).
 - [x] Double-click on empty canvas opens a quick block search; Space fits the diagram to the window.
 
-**Not in M1:** importing `.slx` files (zipped XML) is a later interoperability item. Code generation and hardware targets are out of scope.
+- [x] **Interoperability:** open `.slx` (all package layouts: XML, JSON settings, separate system parts) and `.mdl` files; masked subsystems, scope logging, local Goto tags, active configuration set. Unsupported blocks become zero-output placeholders with a note. Save as `.slx` (the default) or `.bmdl`; exported models were checked to load and simulate in the reference software.
+  - [ ] Signal Builder data, Stateflow charts, triggered subsystems, signal logging (`logsout`).
+
+**Not in M1:** code generation and hardware targets are out of scope.
 
 **Exit:**
 - [x] **Reference-model suite** (`crates/beany-core/tests/sim.rs`, models in `examples/models`), written by us with known analytic or independently computed answers, all within tolerance:

@@ -301,6 +301,24 @@ impl Session {
                     .map(serde_json::Value::String)
                     .map_err(|e| format!("{}: {}", p, e))
             }
+            // Models in any supported format (.bmdl, .slx, .mdl), as the editor's JSON.
+            "read_model" => {
+                let p = req("path")?;
+                let (m, warnings) = crate::sim::run::read_model_file(std::path::Path::new(&p))?;
+                let model: serde_json::Value =
+                    serde_json::from_str(&m.to_json()).map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({ "model": model, "warnings": warnings }))
+            }
+            "write_model" => {
+                let p = req("path")?;
+                let text = args
+                    .get("model")
+                    .map(|m| m.to_string())
+                    .ok_or("missing argument 'model'")?;
+                let m = crate::sim::Model::parse(&text)?;
+                crate::sim::run::write_model_file(std::path::Path::new(&p), &m)?;
+                Ok(serde_json::Value::Null)
+            }
             "write" => {
                 let p = req("path")?;
                 let content = req("content")?;

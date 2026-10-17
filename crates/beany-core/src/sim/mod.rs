@@ -1,6 +1,8 @@
 //! Block-diagram simulator: model format, block library and simulation engine.
 
 pub mod blocks;
+pub mod export;
+pub mod import;
 pub mod model;
 pub mod ode;
 pub mod run;
@@ -26,6 +28,8 @@ struct FlatBlock {
     params: BTreeMap<String, String>,
     /// Inside an enabled subsystem: the flat block carrying its enable signal.
     enable: Option<usize>,
+    /// Variables of enclosing masked subsystems, outermost first: (name, expression).
+    mask: Vec<(String, String)>,
 }
 
 struct Flat {
@@ -38,8 +42,9 @@ pub fn is_subsystem(kind: &str) -> bool {
     kind == "Subsystem" || kind == "EnabledSubsystem"
 }
 
-/// Connect every From block to the Goto block with the same tag.
-fn wire_goto_from(flat: &mut Flat) -> Result<(), SimError> {
+/// Connect every From block to the Goto block with the same tag. A From without a
+/// Goto reads 0 and is reported in `warnings`.
+fn wire_goto_from(flat: &mut Flat, warnings: &mut Vec<String>) -> Result<(), SimError> {
     let tag = |b: &FlatBlock| b.params.get("tag").cloned().unwrap_or_else(|| "A".into());
     let mut gotos: BTreeMap<String, usize> = BTreeMap::new();
     for (i, b) in flat.blocks.iter().enumerate() {
@@ -56,11 +61,14 @@ fn wire_goto_from(flat: &mut Flat) -> Result<(), SimError> {
     }
     for (i, b) in flat.blocks.iter().enumerate() {
         if b.kind == "From" {
-            let g = *gotos.get(&tag(b)).ok_or_else(|| SimError {
-                message: format!("{}: no Goto block has tag '{}'.", b.name, tag(b)),
-                block: Some(b.id.clone()),
-            })?;
-            flat.lines.push(((g, 0), (i, 0)));
+            match gotos.get(&tag(b)) {
+                Some(&g) => flat.lines.push(((g, 0), (i, 0))),
+                None => warnings.push(format!(
+                    "{}: no Goto block has tag '{}'; the From block reads 0.",
+                    b.name,
+                    tag(b)
+                )),
+            }
         }
     }
     Ok(())
@@ -152,6 +160,7 @@ fn flatten(
     name_prefix: &str,
     top: bool,
     enable: Option<usize>,
+    mask: &[(String, String)],
     flat: &mut Flat,
 ) -> SimResult<BTreeMap<String, (Vec<usize>, Vec<usize>)>> {
     let mut ports: BTreeMap<String, (Vec<usize>, Vec<usize>)> = BTreeMap::new();
@@ -173,6 +182,7 @@ fn flatten(
                     kind: "Pass".into(),
                     params: BTreeMap::new(),
                     enable,
+                    mask: mask.to_vec(),
                 });
                 Some(idx)
             } else {
@@ -185,12 +195,20 @@ fn flatten(
                 blocks: vec![],
                 lines: vec![],
             });
+            // Mask parameters ("mask:<variable>") are visible to every block inside.
+            let mut inner_mask = mask.to_vec();
+            for (k, v) in &b.params {
+                if let Some(var) = k.strip_prefix("mask:") {
+                    inner_mask.push((var.to_string(), v.clone()));
+                }
+            }
             let inner = flatten(
                 &sys,
                 &format!("{}/", id),
                 &format!("{}/", name),
                 false,
                 inner_enable,
+                &inner_mask,
                 flat,
             )?;
             // Subsystem port k maps to the Inport/Outport block with port number k inside.
@@ -230,6 +248,7 @@ fn flatten(
             kind,
             params: b.params.clone(),
             enable,
+            mask: mask.to_vec(),
         });
         ports.insert(b.id.clone(), (vec![idx], vec![idx]));
     }
@@ -551,11 +570,11 @@ pub fn simulate(
         blocks: Vec::new(),
         lines: Vec::new(),
     };
-    flatten(model, "", "", true, None, &mut flat)?;
-    wire_goto_from(&mut flat)?;
+    flatten(model, "", "", true, None, &[], &mut flat)?;
+    let mut warnings = Vec::new();
+    wire_goto_from(&mut flat, &mut warnings)?;
     wire_buses(&mut flat)?;
     let defs = blocks::library();
-    let mut warnings = Vec::new();
 
     // Build runtime blocks with evaluated parameters.
     let mut rblocks: Vec<Box<dyn Block>> = Vec::with_capacity(flat.blocks.len());
@@ -570,41 +589,65 @@ pub fn simulate(
         let def = defs.iter().find(|d| d.kind == def_kind);
         let mut values = BTreeMap::new();
         let mut texts = BTreeMap::new();
-        if let Some(def) = def {
-            for pd in &def.params {
-                let raw = fb
-                    .params
-                    .get(pd.name)
-                    .cloned()
-                    .unwrap_or_else(|| pd.default.to_string());
-                if pd.kind == "expr" {
-                    let v = eval_param(it, &fb.name, pd.name, &raw).map_err(|m| SimError {
-                        message: m,
-                        block: Some(fb.id.clone()),
-                    })?;
-                    let v = match (pd.name, v.to_num()) {
-                        ("ts", Ok(a)) if a.data.len() == 2 => {
-                            let (period, offset) = (a.data[0], a.data[1]);
-                            if !(0.0..period).contains(&offset) {
-                                return Err(SimError {
-                                    message: format!(
-                                        "{}: the sample time offset must be at least 0 and less than the period.",
-                                        fb.name
-                                    ),
-                                    block: Some(fb.id.clone()),
-                                });
+        // Masked subsystems: their variables exist while this block's parameters are evaluated.
+        let saved: Vec<(String, Option<Value>)> = fb
+            .mask
+            .iter()
+            .map(|(n, _)| (n.clone(), it.get_var(n).cloned()))
+            .collect();
+        let mut evaluate = |it: &mut Interp| -> Result<(), SimError> {
+            for (n, e) in &fb.mask {
+                let v = eval_param(it, &fb.name, n, e).map_err(|m| SimError {
+                    message: m,
+                    block: Some(fb.id.clone()),
+                })?;
+                it.set_var(n, v);
+            }
+            if let Some(def) = def {
+                for pd in &def.params {
+                    let raw = fb
+                        .params
+                        .get(pd.name)
+                        .cloned()
+                        .unwrap_or_else(|| pd.default.to_string());
+                    if pd.kind == "expr" {
+                        let v = eval_param(it, &fb.name, pd.name, &raw).map_err(|m| SimError {
+                            message: m,
+                            block: Some(fb.id.clone()),
+                        })?;
+                        let v = match (pd.name, v.to_num()) {
+                            ("ts", Ok(a)) if a.data.len() == 2 => {
+                                let (period, offset) = (a.data[0], a.data[1]);
+                                if !(0.0..period).contains(&offset) {
+                                    return Err(SimError {
+                                        message: format!(
+                                            "{}: the sample time offset must be at least 0 and less than the period.",
+                                            fb.name
+                                        ),
+                                        block: Some(fb.id.clone()),
+                                    });
+                                }
+                                offsets[bi] = offset;
+                                Value::num(period)
                             }
-                            offsets[bi] = offset;
-                            Value::num(period)
-                        }
-                        (_, _) => v,
-                    };
-                    values.insert(pd.name.to_string(), v);
-                } else {
-                    texts.insert(pd.name.to_string(), raw);
+                            (_, _) => v,
+                        };
+                        values.insert(pd.name.to_string(), v);
+                    } else {
+                        texts.insert(pd.name.to_string(), raw);
+                    }
                 }
             }
+            Ok(())
+        };
+        let evaluated = evaluate(it);
+        for (n, v) in saved.into_iter().rev() {
+            match v {
+                Some(v) => it.set_var(&n, v),
+                None => it.clear_var(&n),
+            }
         }
+        evaluated?;
         // Hidden parameters set by the engine itself.
         for (k, v) in &fb.params {
             if k.starts_with('_') {

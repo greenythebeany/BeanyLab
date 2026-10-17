@@ -727,11 +727,13 @@ function newModel() {
   const name = `untitled${untitledModelSeq > 1 ? untitledModelSeq : ""}`;
   untitledModelSeq++;
   if (isDesktop && !modelWindow) {
-    openAppWindow(`model-new-${Date.now()}`, `newmodel=${encodeURIComponent(name)}`, `${name}.bmdl - BeanyLab Model`);
+    openAppWindow(`model-new-${Date.now()}`, `newmodel=${encodeURIComponent(name)}`, `${name}.slx - BeanyLab Model`);
     return;
   }
-  newModelTab(null, `${name}.bmdl`, emptyModel(name));
+  newModelTab(null, `${name}.slx`, emptyModel(name));
 }
+
+const MODEL_RE = /\.(slx|mdl|bmdl)$/i;
 
 function modelWindowLabel(path: string): string {
   return "model-" + path.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
@@ -746,6 +748,7 @@ function wireModelEvents() {
     handleResult(p.result);
   });
   onAppEvent("model-saved", () => refreshFiles());
+  onAppEvent("model-notes", (text: string) => appendText(text, "info"));
   onAppEvent("figure-closed", (id: number) => { figWins.delete(id); });
 }
 
@@ -772,7 +775,7 @@ function onEngineEvent(name: string, p: any) {
 }
 
 function runModel(t: Tab): Promise<void> {
-  const label = t.name.replace(/\.bmdl$/i, "");
+  const label = t.name.replace(MODEL_RE, "");
   if (!modelWindow) addHistory(`sim('${label}')`);
   return new Promise((resolve) => enqueue(async () => {
     appendText(`>> sim('${label}')\n`, "echo");
@@ -798,14 +801,20 @@ function runModel(t: Tab): Promise<void> {
 async function openPath(path: string) {
   const existing = tabs.find((t) => (t.kind === "code" || t.kind === "model") && t.path && samePath(t.path, path));
   if (existing) { activate(existing); return; }
-  if (/\.bmdl$/i.test(path)) {
+  if (MODEL_RE.test(path)) {
     if (isDesktop && !modelWindow) {
       openAppWindow(modelWindowLabel(path), `model=${encodeURIComponent(path)}`, `${baseName(path)} - BeanyLab Model`);
       return;
     }
     try {
-      const text: string = await call("read", { path });
-      const model = JSON.parse(text) as Model;
+      const r = await call<{ model: Model; warnings: string[] }>("read_model", { path });
+      const model = r.model;
+      if (r.warnings.length) {
+        toast(`${baseName(path)}: ${r.warnings.length} block(s) could not be converted exactly; details are in the Command Window.`);
+        const text = `Opened ${baseName(path)} with ${r.warnings.length} conversion note(s):\n${r.warnings.map((w) => "  " + w).join("\n")}\n`;
+        if (modelWindow) broadcast("model-notes", text);
+        else appendText(text, "info");
+      }
       model.solver = { ...emptyModel("").solver, ...(model.solver ?? {}) };
       model.lines = model.lines ?? [];
       const fill = (m: Model) => { for (const b of m.blocks) { b.w = b.w ?? 70; b.h = b.h ?? 50; b.params = b.params ?? {}; b.name = b.name || b.type; if (b.system) { b.system.lines = b.system.lines ?? []; fill(b.system); } } };
@@ -834,18 +843,20 @@ async function openFileDialog() {
 async function saveActive(as: boolean): Promise<boolean> {
   const t = activeTab;
   if (!t || (t.kind !== "code" && t.kind !== "model")) return false;
-  const ext = t.kind === "model" ? ".bmdl" : ".m";
   let path = t.path;
+  // The old text .mdl format is read-only: saving goes to .slx.
+  if (t.kind === "model" && path && /\.mdl$/i.test(path)) as = true;
   if (!path || as) {
-    const suggested = joinPath(cwd, t.kind === "model" ? t.name : guessName(t));
-    path = await pickSaveFile(suggested);
+    const name = t.kind === "model" ? t.name.replace(/\.mdl$/i, ".slx") : guessName(t);
+    path = await pickSaveFile(joinPath(cwd, name));
     if (!path) return false;
-    if (!path.toLowerCase().endsWith(ext)) path += ext;
+    if (t.kind === "model" ? !/\.(slx|bmdl)$/i.test(path) : !path.toLowerCase().endsWith(".m")) path += t.kind === "model" ? ".slx" : ".m";
   }
-  if (t.kind === "model") t.me!.root.name = baseName(path).replace(/\.bmdl$/i, "");
+  if (t.kind === "model") t.me!.root.name = baseName(path).replace(MODEL_RE, "");
   const text = t.kind === "model" ? JSON.stringify(t.me!.root, null, 2) + "\n" : t.model!.getValue();
   try {
-    await call("write", { path, content: text });
+    if (t.kind === "model") await call("write_model", { path, model: t.me!.root });
+    else await call("write", { path, content: text });
   } catch (e) {
     toast(String(e));
     return false;
@@ -925,7 +936,7 @@ async function refreshFiles() {
   el.innerHTML = "";
   for (const f of entries) {
     const row = document.createElement("div");
-    row.className = "frow" + (/\.(m|bmdl)$/i.test(f.name) ? " code" : "");
+    row.className = "frow" + (/\.(m|bmdl|slx|mdl)$/i.test(f.name) ? " code" : "");
     row.innerHTML = `${fileIcon(f.name, f.is_dir)}<span class="name"></span>`;
     (row.querySelector(".name") as HTMLElement).textContent = f.name;
     row.title = f.path;
@@ -944,7 +955,7 @@ async function refreshFiles() {
       if (f.is_dir) items.push({ label: "Open folder", icon: "open", run: () => setCwd(f.path) });
       else items.push({ label: "Open", icon: "open", run: () => openPath(f.path) });
       if (/\.m$/i.test(f.name)) items.push({ label: "Run", icon: "run", run: () => runPath(f.path) });
-      if (/\.bmdl$/i.test(f.name)) items.push({ label: "Simulate", icon: "run", run: () => { const c = `sim('${f.name.replace(/\.bmdl$/i, "")}')`; addHistory(c); execute(c, true); } });
+      if (MODEL_RE.test(f.name)) items.push({ label: "Simulate", icon: "run", run: () => { const c = `sim('${f.name.replace(MODEL_RE, "")}')`; addHistory(c); execute(c, true); } });
       if (f.is_dir) items.push({ label: "Add to Path", icon: "path", run: () => execute(`addpath('${f.path}')`, true) });
       menu(e, items);
     };
@@ -1333,7 +1344,7 @@ async function boot() {
     if (path) await openPath(path);
     else {
       const name = query.get("newmodel") || "untitled";
-      newModelTab(null, `${name}.bmdl`, emptyModel(name));
+      newModelTab(null, `${name}.slx`, emptyModel(name));
     }
     updateModelWindowTitle();
     guardClose(() => !tabs[0] || !isDirty(tabs[0]) || confirm(`${tabs[0].name} has unsaved changes. Close it anyway?`));
