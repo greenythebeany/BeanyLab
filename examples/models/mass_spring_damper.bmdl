@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "mass_spring_damper",
+  "solver": { "solver": "ode45", "stop_time": "20", "rel_tol": "1e-6", "abs_tol": "1e-9" },
+  "blocks": [
+    { "id": "force", "type": "Step", "name": "Force", "x": 40, "y": 100, "params": { "time": "0", "initial": "0", "final": "1" } },
+    { "id": "sum", "type": "Sum", "name": "Sum", "x": 160, "y": 100, "w": 50, "params": { "signs": "+--" } },
+    { "id": "mass", "type": "Gain", "name": "1/m", "x": 250, "y": 100, "params": { "gain": "1/1" } },
+    { "id": "vel", "type": "Integrator", "name": "Velocity", "x": 360, "y": 100, "params": { "initial": "0" } },
+    { "id": "pos", "type": "Integrator", "name": "Position", "x": 480, "y": 100, "params": { "initial": "0" } },
+    { "id": "damper", "type": "Gain", "name": "c", "x": 300, "y": 220, "params": { "gain": "0.5" } },
+    { "id": "spring", "type": "Gain", "name": "k", "x": 300, "y": 300, "params": { "gain": "2" } },
+    { "id": "scope", "type": "Scope", "name": "Position scope", "x": 620, "y": 40 },
+    { "id": "log", "type": "ToWorkspace", "name": "Log x", "x": 620, "y": 140, "params": { "variable": "x" } }
+  ],
+  "lines": [
+    { "src": { "block": "force", "port": 1 }, "dst": { "block": "sum", "port": 1 } },
+    { "src": { "block": "sum", "port": 1 }, "dst": { "block": "mass", "port": 1 } },
+    { "src": { "block": "mass", "port": 1 }, "dst": { "block": "vel", "port": 1 } },
+    { "src": { "block": "vel", "port": 1 }, "dst": { "block": "pos", "port": 1 } },
+    { "src": { "block": "vel", "port": 1 }, "dst": { "block": "damper", "port": 1 } },
+    { "src": { "block": "pos", "port": 1 }, "dst": { "block": "spring", "port": 1 } },
+    { "src": { "block": "damper", "port": 1 }, "dst": { "block": "sum", "port": 2 } },
+    { "src": { "block": "spring", "port": 1 }, "dst": { "block": "sum", "port": 3 } },
+    { "src": { "block": "pos", "port": 1 }, "dst": { "block": "scope", "port": 1 } },
+    { "src": { "block": "pos", "port": 1 }, "dst": { "block": "log", "port": 1 } }
+  ]
+}

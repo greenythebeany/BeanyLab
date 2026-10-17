@@ -324,6 +324,56 @@ impl Session {
                 self.clear_workspace();
                 json(&self.workspace())
             }
+            "block_library" => json(&crate::sim::blocks::library()),
+            "block_ports" => {
+                // Port counts for editor blocks: [{type, params, system?}] -> [[in, out], ...]
+                let list = args
+                    .get("blocks")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let out: Vec<(usize, usize)> = list
+                    .iter()
+                    .map(|b| {
+                        let kind = b.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        let params: std::collections::BTreeMap<String, String> = b
+                            .get("params")
+                            .and_then(|p| serde_json::from_value(p.clone()).ok())
+                            .unwrap_or_default();
+                        let sub = b
+                            .get("system")
+                            .and_then(|s| {
+                                serde_json::from_value::<crate::sim::Model>(s.clone()).ok()
+                            })
+                            .map(|m| crate::sim::subsystem_ports(&m));
+                        crate::sim::blocks::ports_for(kind, &params, sub)
+                    })
+                    .collect();
+                json(&out)
+            }
+            "sim" => {
+                let model: crate::sim::Model =
+                    serde_json::from_value(args.get("model").cloned().unwrap_or_default())
+                        .map_err(|e| format!("Invalid model: {}", e))?;
+                let label = s("label").unwrap_or_else(|| "model".into());
+                self.interp.history.push(format!("sim('{}')", label));
+                let (r, report) = match crate::sim::run::run(&mut self.interp, &model, &label) {
+                    Ok((out, report)) => {
+                        self.interp.set_var("out", out);
+                        (self.finish(Ok(())), report)
+                    }
+                    Err(failure) => {
+                        let (e, block) = *failure;
+                        let report = crate::sim::run::RunReport {
+                            displays: vec![],
+                            error_block: block,
+                            stop_time: 0.0,
+                        };
+                        (self.finish(Err(e)), report)
+                    }
+                };
+                Ok(serde_json::json!({ "result": json(&r)?, "report": json(&report)? }))
+            }
             other => Err(format!("unknown method '{}'", other)),
         }
     }

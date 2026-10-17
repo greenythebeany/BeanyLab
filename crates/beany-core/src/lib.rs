@@ -19,6 +19,7 @@ pub mod mat;
 pub mod ops;
 pub mod parser;
 pub mod session;
+pub mod sim;
 pub mod value;
 
 pub use error::{MError, MResult};

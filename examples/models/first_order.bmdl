@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "first_order",
+  "solver": { "solver": "auto", "stop_time": "6" },
+  "blocks": [
+    { "id": "step", "type": "Step", "name": "Step", "x": 60, "y": 120, "params": { "time": "1", "initial": "0", "final": "1" } },
+    { "id": "plant", "type": "TransferFcn", "name": "Plant", "x": 220, "y": 120, "w": 90, "params": { "num": "[1]", "den": "[1 1]" } },
+    { "id": "scope", "type": "Scope", "name": "Response", "x": 400, "y": 60, "params": { "inputs": "1" } },
+    { "id": "log", "type": "ToWorkspace", "name": "Log y", "x": 400, "y": 180, "params": { "variable": "y" } }
+  ],
+  "lines": [
+    { "src": { "block": "step", "port": 1 }, "dst": { "block": "plant", "port": 1 } },
+    { "src": { "block": "plant", "port": 1 }, "dst": { "block": "scope", "port": 1 } },
+    { "src": { "block": "plant", "port": 1 }, "dst": { "block": "log", "port": 1 } }
+  ]
+}

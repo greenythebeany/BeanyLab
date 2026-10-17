@@ -27,6 +27,7 @@ pub fn register(it: &mut Interp) {
     plot::register(it);
     stats::register(it);
     objects::register(it);
+    crate::sim::run::register(it);
 }
 
 pub(crate) type R = MResult<Vec<Value>>;

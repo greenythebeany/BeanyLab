@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "algebraic_loop",
+  "solver": { "stop_time": "1" },
+  "blocks": [
+    { "id": "c", "type": "Constant", "name": "Input", "x": 40, "y": 100 },
+    { "id": "sum", "type": "Sum", "name": "Sum", "x": 160, "y": 100, "w": 50, "params": { "signs": "+-" } },
+    { "id": "k", "type": "Gain", "name": "Feedback gain", "x": 260, "y": 100, "params": { "gain": "2" } },
+    { "id": "out", "type": "Terminator", "name": "End", "x": 380, "y": 100 }
+  ],
+  "lines": [
+    { "src": { "block": "c", "port": 1 }, "dst": { "block": "sum", "port": 1 } },
+    { "src": { "block": "sum", "port": 1 }, "dst": { "block": "k", "port": 1 } },
+    { "src": { "block": "k", "port": 1 }, "dst": { "block": "sum", "port": 2 } },
+    { "src": { "block": "k", "port": 1 }, "dst": { "block": "out", "port": 1 } }
+  ]
+}

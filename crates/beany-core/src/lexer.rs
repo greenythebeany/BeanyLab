@@ -88,6 +88,14 @@ const OPS1: [&str; 18] = [
     "+", "-", "*", "/", "\\", "^", "<", ">", "&", "|", "~", "=", ":", "(", ")", ".", "@", "!",
 ];
 
+/// Valid variable name: letter first, then letters, digits or underscores, not a keyword.
+pub fn is_identifier(s: &str) -> bool {
+    let mut cs = s.chars();
+    cs.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && keyword(s).is_none()
+}
+
 pub fn tokenize(src: &[char]) -> Result<Vec<Token>, MError> {
     Lexer {
         s: src,

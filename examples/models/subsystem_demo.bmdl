@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "name": "subsystem_demo",
+  "solver": { "solver": "ode45", "stop_time": "10", "rel_tol": "1e-6" },
+  "blocks": [
+    { "id": "ref", "type": "Step", "name": "Setpoint", "x": 40, "y": 100, "params": { "time": "0", "final": "1" } },
+    { "id": "ctrl", "type": "Subsystem", "name": "Controller", "x": 180, "y": 95, "w": 100, "h": 60,
+      "system": {
+        "blocks": [
+          { "id": "in", "type": "Inport", "name": "error", "x": 40, "y": 100, "params": { "port": "1" } },
+          { "id": "kp", "type": "Gain", "name": "Kp", "x": 160, "y": 60, "params": { "gain": "2" } },
+          { "id": "ki", "type": "Integrator", "name": "Integral", "x": 160, "y": 160 },
+          { "id": "sum", "type": "Sum", "name": "Sum", "x": 300, "y": 100, "w": 50, "params": { "signs": "++" } },
+          { "id": "out", "type": "Outport", "name": "u", "x": 420, "y": 100, "params": { "port": "1" } }
+        ],
+        "lines": [
+          { "src": { "block": "in", "port": 1 }, "dst": { "block": "kp", "port": 1 } },
+          { "src": { "block": "in", "port": 1 }, "dst": { "block": "ki", "port": 1 } },
+          { "src": { "block": "kp", "port": 1 }, "dst": { "block": "sum", "port": 1 } },
+          { "src": { "block": "ki", "port": 1 }, "dst": { "block": "sum", "port": 2 } },
+          { "src": { "block": "sum", "port": 1 }, "dst": { "block": "out", "port": 1 } }
+        ]
+      }
+    },
+    { "id": "err", "type": "Sum", "name": "Error", "x": 120, "y": 230, "w": 50, "params": { "signs": "+-" } },
+    { "id": "plant", "type": "TransferFcn", "name": "Plant", "x": 340, "y": 100, "w": 90, "params": { "num": "1", "den": "[1 1]" } },
+    { "id": "scope", "type": "Scope", "name": "Closed loop", "x": 500, "y": 40 },
+    { "id": "log", "type": "ToWorkspace", "name": "Log y", "x": 500, "y": 160, "params": { "variable": "y" } }
+  ],
+  "lines": [
+    { "src": { "block": "ref", "port": 1 }, "dst": { "block": "err", "port": 1 } },
+    { "src": { "block": "err", "port": 1 }, "dst": { "block": "ctrl", "port": 1 } },
+    { "src": { "block": "ctrl", "port": 1 }, "dst": { "block": "plant", "port": 1 } },
+    { "src": { "block": "plant", "port": 1 }, "dst": { "block": "err", "port": 2 } },
+    { "src": { "block": "plant", "port": 1 }, "dst": { "block": "scope", "port": 1 } },
+    { "src": { "block": "plant", "port": 1 }, "dst": { "block": "log", "port": 1 } }
+  ]
+}

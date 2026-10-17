@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "bouncing_ball",
+  "solver": { "solver": "ode45", "stop_time": "8", "rel_tol": "1e-8", "abs_tol": "1e-10", "max_step": "0.01" },
+  "blocks": [
+    { "id": "g", "type": "Constant", "name": "Gravity", "x": 40, "y": 100, "params": { "value": "-9.81" } },
+    { "id": "vel", "type": "Integrator", "name": "Velocity", "x": 200, "y": 100, "w": 80, "h": 70, "params": { "initial": "0", "reset": "falling", "ic_source": "external", "state_port": "on" } },
+    { "id": "pos", "type": "Integrator", "name": "Position", "x": 360, "y": 100, "w": 80, "params": { "initial": "10" } },
+    { "id": "rest", "type": "Gain", "name": "Restitution", "x": 200, "y": 240, "params": { "gain": "-0.8" } },
+    { "id": "scope", "type": "Scope", "name": "Height", "x": 520, "y": 40 },
+    { "id": "logh", "type": "ToWorkspace", "name": "Log h", "x": 520, "y": 130, "params": { "variable": "h" } },
+    { "id": "logv", "type": "ToWorkspace", "name": "Log v", "x": 520, "y": 220, "params": { "variable": "v" } }
+  ],
+  "lines": [
+    { "src": { "block": "g", "port": 1 }, "dst": { "block": "vel", "port": 1 } },
+    { "src": { "block": "vel", "port": 1 }, "dst": { "block": "pos", "port": 1 } },
+    { "src": { "block": "pos", "port": 1 }, "dst": { "block": "vel", "port": 2 } },
+    { "src": { "block": "vel", "port": 2 }, "dst": { "block": "rest", "port": 1 } },
+    { "src": { "block": "rest", "port": 1 }, "dst": { "block": "vel", "port": 3 } },
+    { "src": { "block": "pos", "port": 1 }, "dst": { "block": "scope", "port": 1 } },
+    { "src": { "block": "pos", "port": 1 }, "dst": { "block": "logh", "port": 1 } },
+    { "src": { "block": "vel", "port": 1 }, "dst": { "block": "logv", "port": 1 } }
+  ]
+}

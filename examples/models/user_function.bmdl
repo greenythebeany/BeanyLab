@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "user_function",
+  "solver": { "solver": "ode4", "stop_time": "5", "fixed_step": "0.01" },
+  "blocks": [
+    { "id": "sine", "type": "SineWave", "name": "Sine", "x": 40, "y": 100, "params": { "amplitude": "1", "frequency": "1" } },
+    { "id": "user", "type": "UserFunction", "name": "squared", "x": 200, "y": 100, "w": 90, "params": { "function": "squared", "inputs": "1" } },
+    { "id": "scope", "type": "Scope", "name": "Squared sine", "x": 360, "y": 40 },
+    { "id": "log", "type": "ToWorkspace", "name": "Log s", "x": 360, "y": 160, "params": { "variable": "s" } }
+  ],
+  "lines": [
+    { "src": { "block": "sine", "port": 1 }, "dst": { "block": "user", "port": 1 } },
+    { "src": { "block": "user", "port": 1 }, "dst": { "block": "scope", "port": 1 } },
+    { "src": { "block": "user", "port": 1 }, "dst": { "block": "log", "port": 1 } }
+  ]
+}

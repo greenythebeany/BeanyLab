@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "van_der_pol",
+  "solver": { "solver": "ode45", "stop_time": "20", "rel_tol": "1e-8", "abs_tol": "1e-10" },
+  "blocks": [
+    { "id": "mux", "type": "Mux", "name": "Mux", "x": 60, "y": 100, "w": 30, "h": 70, "params": { "inputs": "2" } },
+    { "id": "f", "type": "Fcn", "name": "x1'' = mu(1-x1^2)x2 - x1", "x": 140, "y": 105, "w": 180, "params": { "expression": "1*(1 - u(1)^2)*u(2) - u(1)" } },
+    { "id": "x2", "type": "Integrator", "name": "x2", "x": 380, "y": 105, "params": { "initial": "0" } },
+    { "id": "x1", "type": "Integrator", "name": "x1", "x": 500, "y": 105, "params": { "initial": "2" } },
+    { "id": "scope", "type": "Scope", "name": "Oscillator", "x": 640, "y": 40, "params": { "inputs": "2" } },
+    { "id": "log", "type": "ToWorkspace", "name": "Log x1", "x": 640, "y": 160, "params": { "variable": "x1" } }
+  ],
+  "lines": [
+    { "src": { "block": "mux", "port": 1 }, "dst": { "block": "f", "port": 1 } },
+    { "src": { "block": "f", "port": 1 }, "dst": { "block": "x2", "port": 1 } },
+    { "src": { "block": "x2", "port": 1 }, "dst": { "block": "x1", "port": 1 } },
+    { "src": { "block": "x1", "port": 1 }, "dst": { "block": "mux", "port": 1 } },
+    { "src": { "block": "x2", "port": 1 }, "dst": { "block": "mux", "port": 2 } },
+    { "src": { "block": "x1", "port": 1 }, "dst": { "block": "scope", "port": 1 } },
+    { "src": { "block": "x2", "port": 1 }, "dst": { "block": "scope", "port": 2 } },
+    { "src": { "block": "x1", "port": 1 }, "dst": { "block": "log", "port": 1 } }
+  ]
+}
