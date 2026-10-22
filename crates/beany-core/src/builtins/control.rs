@@ -2538,6 +2538,46 @@ fn response_of(
     out
 }
 
+/// Response at arbitrary times: continuous models given a grid that is not uniform
+/// from zero are simulated on a fine uniform grid and interpolated.
+fn sampled_response(
+    m: &Model,
+    kind: Resp,
+    t: &[f64],
+    x0: &[f64],
+) -> Vec<(Vec<Vec<f64>>, Vec<Vec<f64>>)> {
+    let uniform = t.len() < 2
+        || (t[0].abs() < 1e-12 && {
+            let h = t[1] - t[0];
+            t.windows(2)
+                .all(|w| ((w[1] - w[0]) - h).abs() <= 1e-9 * h.abs().max(1e-12))
+        });
+    if m.ts != 0.0 || uniform {
+        return response_of(m, kind, t, x0);
+    }
+    let tmax = t.iter().copied().fold(0.0f64, f64::max);
+    let n = 4000;
+    let grid: Vec<f64> = (0..=n).map(|k| tmax * k as f64 / n as f64).collect();
+    let interp = |rows: &[Vec<f64>]| -> Vec<Vec<f64>> {
+        t.iter()
+            .map(|&ti| {
+                let p = (ti.max(0.0) / tmax.max(1e-300) * n as f64).min(n as f64);
+                let k = (p.floor() as usize).min(n - 1);
+                let f = p - k as f64;
+                rows[k]
+                    .iter()
+                    .zip(&rows[k + 1])
+                    .map(|(a, b)| a * (1.0 - f) + b * f)
+                    .collect()
+            })
+            .collect()
+    };
+    response_of(m, kind, &grid, x0)
+        .into_iter()
+        .map(|(y, x)| (interp(&y), interp(&x)))
+        .collect()
+}
+
 fn split_systems(a: &[Value]) -> (Vec<(Value, Option<String>)>, Vec<Value>) {
     let mut systems = Vec::new();
     let mut rest = Vec::new();
@@ -2613,7 +2653,7 @@ fn time_response(it: &mut Interp, a: Vec<Value>, nargout: usize, kind: Resp) -> 
     if nargout > 0 {
         let m = &models[0];
         let t = time_grid(m, tspec)?;
-        let resp = response_of(m, kind, &t, &x0);
+        let resp = sampled_response(m, kind, &t, &x0);
         let p = m.state_space().c.nrows();
         // y is time x outputs (x inputs flattened into columns).
         let mut cols = Vec::new();
