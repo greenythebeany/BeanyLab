@@ -329,11 +329,11 @@ pub fn parse_linespec(s: &str) -> Option<LineStyle> {
         match c {
             '-' | ':' => st.line = Some(c.to_string()),
             'r' => st.color = Some("#FF0000".into()),
-            'g' => st.color = Some("#00A000".into()),
+            'g' => st.color = Some("#00FF00".into()),
             'b' => st.color = Some("#0000FF".into()),
-            'c' => st.color = Some("#00BFBF".into()),
-            'm' => st.color = Some("#BF00BF".into()),
-            'y' => st.color = Some("#E6C200".into()),
+            'c' => st.color = Some("#00FFFF".into()),
+            'm' => st.color = Some("#FF00FF".into()),
+            'y' => st.color = Some("#FFFF00".into()),
             'k' => st.color = Some("#000000".into()),
             'w' => st.color = Some("#FFFFFF".into()),
             'o' | '+' | '*' | '.' | 'x' | 's' | 'd' | '^' | 'v' | '>' | '<' | 'p' | 'h' => {
@@ -353,11 +353,11 @@ pub fn color_name(s: &str) -> Option<String> {
     Some(
         match s.to_lowercase().as_str() {
             "r" | "red" => "#FF0000",
-            "g" | "green" => "#00A000",
+            "g" | "green" => "#00FF00",
             "b" | "blue" => "#0000FF",
-            "c" | "cyan" => "#00BFBF",
-            "m" | "magenta" => "#BF00BF",
-            "y" | "yellow" => "#E6C200",
+            "c" | "cyan" => "#00FFFF",
+            "m" | "magenta" => "#FF00FF",
+            "y" | "yellow" => "#FFFF00",
             "k" | "black" => "#000000",
             "w" | "white" => "#FFFFFF",
             s if s.starts_with('#') => return Some(s.to_string()),

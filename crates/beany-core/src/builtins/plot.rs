@@ -167,6 +167,8 @@ pub fn register(it: &mut Interp) {
     b.insert("stairs", |it, a, _| simple_xy(it, a, "stairs"));
     b.insert("area", |it, a, _| simple_xy(it, a, "area"));
     b.insert("errorbar", errorbar);
+    b.insert("quiver", |it, a, _| quiver(it, a, false));
+    b.insert("quiver3", |it, a, _| quiver(it, a, true));
     b.insert("surf", |it, a, _| surface(it, a, false));
     b.insert("mesh", |it, a, _| surface(it, a, true));
     b.insert("surfc", |it, a, _| surface(it, a, false));
@@ -858,6 +860,186 @@ fn errorbar(it: &mut Interp, a: Vec<Value>, _: usize) -> R {
         err: e,
         style: st,
         name: None,
+    });
+    none()
+}
+
+/// Arrows drawn as one line series: each shaft and its two head strokes, separated
+/// by NaN breaks.
+fn quiver(it: &mut Interp, a: Vec<Value>, three: bool) -> R {
+    let nums: Vec<Array<f64>> = a
+        .iter()
+        .take_while(|v| !v.is_text())
+        .map(|v| v.to_num())
+        .collect::<MResult<_>>()?;
+    let n_vec = if three { 3 } else { 2 };
+    let n_pos = if three { 3 } else { 2 };
+    // quiver(U,V), quiver(X,Y,U,V) and quiver3(X,Y,Z,U,V,W), each with an optional scale.
+    let (pos, dir, scale_arg) = if nums.len() >= n_pos + n_vec {
+        (
+            nums[..n_pos].to_vec(),
+            nums[n_pos..n_pos + n_vec].to_vec(),
+            nums.get(n_pos + n_vec).map(|s| s.data[0]),
+        )
+    } else if nums.len() >= n_vec && !three {
+        (
+            Vec::new(),
+            nums[..n_vec].to_vec(),
+            nums.get(n_vec).map(|s| s.data[0]),
+        )
+    } else {
+        return Err(merr!("Not enough input arguments."));
+    };
+    let u = &dir[0];
+    let n = u.numel();
+    if dir.iter().any(|d| d.numel() != n) {
+        return Err(merr!("U, V (and W) must be the same size."));
+    }
+    let (xs, ys) = if pos.is_empty() {
+        let (xx, yy) = grid_xy(&[], u)?;
+        (xx.data, yy.data)
+    } else if pos[0].numel() == n && pos[1].numel() == n {
+        (pos[0].data.clone(), pos[1].data.clone())
+    } else {
+        // Vector X and Y name the columns and rows of the grid.
+        let (mut xx, mut yy) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for c in 0..u.cols {
+            for r in 0..u.rows {
+                xx.push(*pos[0].data.get(c).unwrap_or(&(c as f64 + 1.0)));
+                yy.push(*pos[1].data.get(r).unwrap_or(&(r as f64 + 1.0)));
+            }
+        }
+        (xx, yy)
+    };
+    let zs = if three {
+        Some(pos[2].data.clone())
+    } else {
+        None
+    };
+    if xs.len() != n || ys.len() != n || zs.as_ref().is_some_and(|z| z.len() != n) {
+        return Err(merr!("X, Y (and Z) must match the size of U."));
+    }
+    let mut spec = None;
+    let mut opts = LineStyle::default();
+    let mut auto = scale_arg.is_none_or(|s| s != 0.0);
+    let mut factor = scale_arg.filter(|s| *s != 0.0).unwrap_or(1.0);
+    let mut head = 0.2;
+    let mut name = None;
+    let mut i = nums.len();
+    while i < a.len() {
+        let t = a[i].text()?;
+        if i + 1 >= a.len()
+            || (spec.is_none()
+                && i == nums.len()
+                && parse_linespec(&t).is_some()
+                && !t.is_empty()
+                && t != "filled")
+        {
+            if let Some(s) = parse_linespec(&t) {
+                spec = Some(s);
+            }
+            i += 1;
+            continue;
+        }
+        let v = &a[i + 1];
+        match t.to_lowercase().as_str() {
+            "color" => opts.color = color_value(v)?,
+            "linewidth" => opts.width = Some(v.scalar()?),
+            "linestyle" => opts.line = Some(v.text()?),
+            "autoscale" => {
+                auto = v.is_text() && v.text()? == "on" || !v.is_text() && v.scalar()? != 0.0
+            }
+            "autoscalefactor" => factor = v.scalar()?,
+            "maxheadsize" => head = v.scalar()?,
+            "displayname" => name = Some(v.text()?),
+            _ => {}
+        }
+        i += 2;
+    }
+    let comp = |k: usize, j: usize| dir.get(k).map_or(0.0, |d| d.data[j]);
+    // Auto scaling fits the longest arrow into the average grid spacing.
+    let scale = if auto {
+        let side = (n as f64)
+            .powf(1.0 / if three { 3.0 } else { 2.0 })
+            .max(1.0);
+        let span = |v: &[f64]| {
+            let (lo, hi) = v
+                .iter()
+                .filter(|e| e.is_finite())
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), e| {
+                    (l.min(*e), h.max(*e))
+                });
+            if hi > lo {
+                (hi - lo) / side
+            } else {
+                1.0
+            }
+        };
+        let dx = span(&xs);
+        let dy = span(&ys);
+        let dz = zs.as_deref().map_or(1.0, span);
+        let longest = (0..n)
+            .map(|j| {
+                ((comp(0, j) / dx).powi(2) + (comp(1, j) / dy).powi(2) + (comp(2, j) / dz).powi(2))
+                    .sqrt()
+            })
+            .filter(|l| l.is_finite())
+            .fold(0.0, f64::max);
+        if longest > 0.0 {
+            factor * 0.9 / longest
+        } else {
+            factor
+        }
+    } else {
+        factor
+    };
+    let (mut lx, mut ly, mut lz) = (Vec::new(), Vec::new(), Vec::new());
+    for j in 0..n {
+        let p = [xs[j], ys[j], zs.as_ref().map_or(0.0, |z| z[j])];
+        let d = [comp(0, j) * scale, comp(1, j) * scale, comp(2, j) * scale];
+        let tip = [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
+        let mut push = |q: [f64; 3]| {
+            lx.push(q[0]);
+            ly.push(q[1]);
+            lz.push(q[2]);
+        };
+        push(p);
+        push(tip);
+        push([f64::NAN; 3]);
+        if head > 0.0 {
+            // Two strokes back from the tip, about 20 degrees off the shaft.
+            let (c, s) = (0.94, 0.34);
+            let h = head;
+            let back = [-d[0] * h, -d[1] * h];
+            for sg in [1.0, -1.0] {
+                push([
+                    tip[0] + c * back[0] - sg * s * back[1],
+                    tip[1] + sg * s * back[0] + c * back[1],
+                    tip[2] - d[2] * h,
+                ]);
+                push(tip);
+            }
+            push([f64::NAN; 3]);
+        }
+    }
+    let ax = it.graphics.plot_axes();
+    if three {
+        ax.view3d = true;
+    }
+    let mut st = merge_style(spec, &opts);
+    if st.color.is_none() {
+        st.color = Some(next_color(ax));
+    }
+    if st.line.as_deref() == Some("none") {
+        st.line = Some("-".into());
+    }
+    st.marker = None;
+    ax.series.push(Series::Line {
+        x: lx,
+        y: ly,
+        z: if three { Some(lz) } else { None },
+        style: st,
+        name,
     });
     none()
 }

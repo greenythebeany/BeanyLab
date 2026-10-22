@@ -480,6 +480,27 @@ fn plotting_builds_figure_model() {
 }
 
 #[test]
+fn quiver_draws_arrows_and_colors_parse() {
+    let mut it = run("[x, y] = meshgrid(-1:1, -1:1); quiver(x, y, -y, x, 'g'); hold on; quiver(1, 1, 0.5, 0, 0, 'Color', 'magenta'); quiver([1 2; 3 4], [1 1; 1 1]); plot(1:3, 'k:'); plot(1:3, 'c'); plot(1:3, 'y*');");
+    let (figs, _) = it.graphics.take_updates();
+    let s = &figs[0].axes[0].series;
+    assert_eq!(s.len(), 6);
+    let color = |k: usize| match &s[k] {
+        beany_core::graphics::Series::Line { style, .. } => style.color.clone().unwrap(),
+        _ => panic!("not a line"),
+    };
+    assert_eq!(color(0), "#00FF00");
+    assert_eq!(color(1), "#FF00FF");
+    assert_eq!(color(3), "#000000");
+    assert_eq!(color(4), "#00FFFF");
+    assert_eq!(color(5), "#FFFF00");
+    // Unscaled arrow: shaft from (1,1) to (1.5,1).
+    if let beany_core::graphics::Series::Line { x, y, .. } = &s[1] {
+        assert_eq!((x[0], y[0], x[1], y[1]), (1.0, 1.0, 1.5, 1.0));
+    }
+}
+
+#[test]
 fn subplot_replaces_overlapping_axes() {
     let mut it = run("plot(1:3); subplot(2,1,2); bar([1 2]);");
     let (figs, _) = it.graphics.take_updates();
