@@ -62,6 +62,8 @@ pub struct Interp {
     pub builtins: HashMap<&'static str, Builtin>,
     /// Versions of builtins used when an argument is complex.
     pub complex_builtins: HashMap<&'static str, Builtin>,
+    /// Versions of builtins used when an argument is a linear system model.
+    pub lti_builtins: HashMap<&'static str, Builtin>,
     pub cwd: PathBuf,
     pub path: Vec<PathBuf>,
     cache: HashMap<PathBuf, (Option<SystemTime>, Arc<FileUnit>)>,
@@ -90,6 +92,8 @@ pub struct Interp {
     pub arg_names: Vec<Option<String>>,
     /// Block-diagram models loaded or built by scripts (new_system/load_system), by name.
     pub open_models: HashMap<String, (crate::sim::Model, Option<PathBuf>)>,
+    /// setappdata/getappdata values, keyed by handle and name.
+    pub appdata: HashMap<String, Value>,
     /// Loaded user classes by name.
     pub classes: HashMap<String, Arc<crate::classes::ClassInfo>>,
     /// Function names found in `private/` folders, by folder.
@@ -113,6 +117,7 @@ impl Interp {
             persistents: HashMap::new(),
             builtins: HashMap::new(),
             complex_builtins: HashMap::new(),
+            lti_builtins: HashMap::new(),
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             path: Vec::new(),
             cache: HashMap::new(),
@@ -136,6 +141,7 @@ impl Interp {
             arg_names: Vec::new(),
             open_models: HashMap::new(),
             classes: HashMap::new(),
+            appdata: HashMap::new(),
             private_fns: HashMap::new(),
         };
         crate::builtins::register(&mut it);
@@ -864,6 +870,9 @@ impl Interp {
                     }
                     return Ok(vec![self.object_operator(m, sym, vec![v])?]);
                 }
+                if crate::builtins::control::is_lti(&v) {
+                    return Ok(vec![crate::builtins::control::lti_unary(*op, &v)?]);
+                }
                 vec![ops::unary(*op, &v)?]
             }
             Expr::Binary(BinOp::AndAnd, a, b) => {
@@ -889,6 +898,9 @@ impl Interp {
                 if matches!(l, Value::Inst(_)) || matches!(r, Value::Inst(_)) {
                     let m = crate::classes::binop_method(*op);
                     return Ok(vec![self.object_operator(m, m, vec![l, r])?]);
+                }
+                if crate::builtins::control::is_lti(&l) || crate::builtins::control::is_lti(&r) {
+                    return Ok(vec![crate::builtins::control::lti_binary(*op, &l, &r)?]);
                 }
                 vec![ops::binary(*op, &l, &r)?]
             }
@@ -1227,8 +1239,16 @@ impl Interp {
         nargout: usize,
     ) -> MResult<Vec<Value>> {
         if let Some(unit) = self.frame().unit.clone() {
+            // In a class-folder method file the main function is the method itself,
+            // reached through dispatch rather than as a local function.
+            let method_file = Path::new(&unit.path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .is_some_and(|n| n.to_string_lossy().starts_with('@'));
             if let Some(f) = unit.find(name) {
-                return self.call_user(&unit, &f, args, nargout);
+                if !(method_file && Arc::ptr_eq(&f, &unit.functions[0])) {
+                    return self.call_user(&unit, &f, args, nargout);
+                }
             }
             if let Some(p) = self.private_function(&unit.path, name) {
                 return self.call_file(&p, args, nargout);
@@ -1248,6 +1268,8 @@ impl Interp {
         }
         let complex = if args.iter().any(Value::is_complex) {
             self.complex_builtins.get(name).copied()
+        } else if args.iter().any(crate::builtins::control::is_lti) {
+            self.lti_builtins.get(name).copied()
         } else {
             None
         };

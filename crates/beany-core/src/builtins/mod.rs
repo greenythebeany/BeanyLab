@@ -2,9 +2,11 @@
 
 pub mod addons;
 mod complex;
+pub mod control;
 mod core;
 mod data;
 mod math;
+mod misc;
 pub mod objects;
 mod plot;
 mod stats;
@@ -33,6 +35,8 @@ pub fn register(it: &mut Interp) {
     crate::sim::run::register(it);
     crate::sim::ode::register(it);
     addons::register(it);
+    control::register(it);
+    misc::register(it);
     complex::register(it);
 }
 

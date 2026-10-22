@@ -68,29 +68,36 @@ pub fn register(it: &mut Interp) {
         one(Value::Struct(s))
     });
     b.insert("setfield", |_, a, _| {
-        check_args(&a, 3, 3)?;
-        let mut s = match &a[0] {
-            Value::Struct(s) => s.clone(),
-            v if v.is_empty() => StructArr::scalar(vec![]),
-            _ => return Err(merr!("First argument must be a structure.")),
-        };
-        let k = s.add_key(&a[1].text()?);
-        if s.arr.is_empty() {
-            s.arr = Array::scalar(s.empty_elem());
+        if a.len() < 3 {
+            return Err(merr!("Not enough input arguments."));
         }
-        s.arr.data[0][k] = a[2].clone();
-        one(Value::Struct(s))
+        let n = a.len();
+        one(set_path(
+            Some(a[0].clone()),
+            &a[1..n - 1],
+            a[n - 1].clone(),
+        )?)
     });
     b.insert("getfield", |_, a, _| {
-        check_args(&a, 2, 2)?;
-        let Value::Struct(s) = &a[0] else {
-            return Err(merr!("First argument must be a structure."));
-        };
-        let name = a[1].text()?;
-        s.get(0, &name)
-            .cloned()
-            .map(|v| vec![v])
-            .ok_or_else(|| merr!("Unrecognized field name \"{}\".", name))
+        if a.len() < 2 {
+            return Err(merr!("Not enough input arguments."));
+        }
+        let mut cur = a[0].clone();
+        for p in &a[1..] {
+            cur = match p {
+                Value::Cell(c) => cur.index(&cell_idx(c)?)?,
+                p => {
+                    let name = p.text()?;
+                    let Value::Struct(s) = &cur else {
+                        return Err(merr!("First argument must be a structure."));
+                    };
+                    s.get(0, &name)
+                        .cloned()
+                        .ok_or_else(|| merr!("Unrecognized field name \"{}\".", name))?
+                }
+            };
+        }
+        one(cur)
     });
     b.insert("orderfields", |_, a, _| {
         check_args(&a, 1, 1)?;
@@ -421,4 +428,88 @@ fn funcall_map(it: &mut Interp, a: Vec<Value>, nargout: usize, cells: bool) -> R
         }
     }
     Ok(out)
+}
+
+/// Subscripts given as a cell, like the `{i, j}` arguments of getfield/setfield.
+fn cell_idx(c: &Array<Value>) -> MResult<Vec<Idx>> {
+    c.data
+        .iter()
+        .map(|v| {
+            if v.is_text() && v.text()? == ":" {
+                return Ok(Idx::All);
+            }
+            let m = v.to_num()?;
+            Ok(Idx::List(
+                m.data
+                    .iter()
+                    .map(|x| (*x as usize).saturating_sub(1))
+                    .collect(),
+                (m.rows, m.cols),
+            ))
+        })
+        .collect()
+}
+
+/// Nested `setfield(s, 'a', {2}, 'b', v)`.
+fn set_path(cur: Option<Value>, path: &[Value], v: Value) -> MResult<Value> {
+    let Some(p) = path.first() else {
+        return Ok(v);
+    };
+    if let Value::Cell(c) = p {
+        let idx = cell_idx(c)?;
+        let base = cur.unwrap_or_else(|| Value::Struct(StructArr::scalar(vec![])));
+        let Value::Struct(mut s) = base else {
+            return Err(merr!("Indexed setfield needs a structure array."));
+        };
+        let (rows, cols) = (s.arr.rows.max(1), s.arr.cols.max(1));
+        let k = match idx.as_slice() {
+            [Idx::List(l, _)] if l.len() == 1 => l[0],
+            [Idx::List(r, _), Idx::List(c, _)] if r.len() == 1 && c.len() == 1 => {
+                c[0] * rows + r[0]
+            }
+            _ => return Err(merr!("setfield supports a single element index.")),
+        };
+        if s.arr.is_empty() {
+            s.arr = Array::scalar(s.empty_elem());
+        }
+        while s.arr.numel() <= k {
+            let e = s.empty_elem();
+            s.arr.data.push(e);
+            s.arr.rows = 1;
+            s.arr.cols = s.arr.data.len();
+        }
+        let _ = cols;
+        let mut one_elem = s.clone();
+        one_elem.arr = Array::scalar(s.arr.data[k].clone());
+        let Value::Struct(ns) = set_path(Some(Value::Struct(one_elem)), &path[1..], v)? else {
+            return Err(merr!("Invalid structure assignment."));
+        };
+        for key in &ns.keys {
+            s.add_key(key);
+        }
+        s.arr.data[k] = s
+            .keys
+            .iter()
+            .map(|key| ns.get(0, key).cloned().unwrap_or_else(Value::empty))
+            .collect();
+        return Ok(Value::Struct(s));
+    }
+    let name = p.text()?;
+    let mut s = match cur {
+        Some(Value::Struct(s)) => s,
+        Some(v) if !v.is_empty() => return Err(merr!("First argument must be a structure.")),
+        _ => StructArr::scalar(vec![]),
+    };
+    let k = s.add_key(&name);
+    if s.arr.is_empty() {
+        s.arr = Array::scalar(s.empty_elem());
+    }
+    let child = s.arr.data[0][k].clone();
+    let child = if child.is_empty() && !matches!(child, Value::Struct(_)) {
+        None
+    } else {
+        Some(child)
+    };
+    s.arr.data[0][k] = set_path(child, &path[1..], v)?;
+    Ok(Value::Struct(s))
 }

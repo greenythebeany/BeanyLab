@@ -447,7 +447,18 @@ fn display_formats() {
     assert!(o.contains("z = 1.5000"), "{}", o);
     assert!(o.contains("s =\n\n    'txt'"), "{}", o);
     assert!(o.contains("1×2 cell array"), "{}", o);
-    assert!(o.contains("b = 1"), "{}", o);
+    assert!(
+        o.contains(
+            "b =
+
+  logical
+
+   1
+"
+        ),
+        "{}",
+        o
+    );
 }
 
 #[test]
@@ -965,4 +976,52 @@ fn complex_roots_eig_fft_and_display() {
     assert!(near(&cplx(&it, "v"), &[(0.0, 0.0)]));
     let out = it.take_output();
     assert!(out.contains("z = 1.0000 + 2.0000i"), "{}", out);
+}
+
+// ---------------- control systems ----------------
+
+#[test]
+fn control_models_algebra_and_analysis() {
+    let it = run("s = tf('s'); L = 10/(s*(s+1)*(s+5)); T = feedback(L, 1); [n, d] = tfdata(T, 'v'); \
+                  [Gm, Pm, Wg, Wp] = margin(L); p = pole(tf(1, [1 3 2])); \
+                  Gd = c2d(tf(1, [1 3 2]), 0.1); [nd, dd] = tfdata(Gd, 'v'); \
+                  K = lqr([0 1; 0 0], [0; 1], eye(2), 1); K2 = place([0 1; 0 0], [0; 1], [-1 -2]); \
+                  y = step(tf(1, [1 1]), [0 1 2]); g = dcgain(zpk(-1, [-2 -3], 6)); \
+                  S = ss(tf(1, [1 3 2])); [ns, ds] = tfdata(tf(S), 'v'); X = lyap([-1 0; 0 -2], eye(2)); \
+                  [mag, ph] = bode(tf(1, [1 1]), 1);");
+    assert_eq!(num(&it, "n"), vec![0.0, 0.0, 0.0, 10.0]);
+    assert_eq!(num(&it, "d"), vec![1.0, 6.0, 5.0, 10.0]);
+    assert!((num(&it, "Gm")[0] - 3.0).abs() < 1e-6);
+    assert!((num(&it, "Wg")[0] - 5f64.sqrt()).abs() < 1e-6);
+    assert!((num(&it, "Pm")[0] - 25.3898).abs() < 1e-3);
+    let mut p = num(&it, "p");
+    p.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!((p[0] + 2.0).abs() < 1e-9 && (p[1] + 1.0).abs() < 1e-9);
+    let nd = num(&it, "nd");
+    let dd = num(&it, "dd");
+    assert!(
+        (nd[1] - 0.004528).abs() < 1e-6 && (nd[2] - 0.004097).abs() < 1e-6,
+        "{:?}",
+        nd
+    );
+    assert!(
+        (dd[1] + 1.724).abs() < 1e-3 && (dd[2] - 0.7408).abs() < 1e-4,
+        "{:?}",
+        dd
+    );
+    let k = num(&it, "K");
+    assert!((k[0] - 1.0).abs() < 1e-6 && (k[1] - 3f64.sqrt()).abs() < 1e-6);
+    let k2 = num(&it, "K2");
+    assert!((k2[0] - 2.0).abs() < 1e-9 && (k2[1] - 3.0).abs() < 1e-9);
+    let y = num(&it, "y");
+    assert!(
+        (y[1] - (1.0 - (-1f64).exp())).abs() < 1e-6 && (y[2] - (1.0 - (-2f64).exp())).abs() < 1e-6
+    );
+    assert!((num(&it, "g")[0] - 1.0).abs() < 1e-12);
+    let ds = num(&it, "ds");
+    assert!((ds[1] - 3.0).abs() < 1e-9 && (ds[2] - 2.0).abs() < 1e-9);
+    let x = num(&it, "X");
+    assert!((x[0] - 0.5).abs() < 1e-12 && (x[3] - 0.25).abs() < 1e-12);
+    assert!((num(&it, "mag")[0] - 0.5f64.sqrt()).abs() < 1e-12);
+    assert!((num(&it, "ph")[0] + 45.0).abs() < 1e-9);
 }

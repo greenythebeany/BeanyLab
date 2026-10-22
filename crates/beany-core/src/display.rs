@@ -478,12 +478,21 @@ pub fn display(name: &str, v: &Value, fmt: Format) -> String {
     match v {
         Value::Num(a, c) => {
             if a.numel() == 1 {
-                let s = if *c == NumClass::Logical {
-                    format!("{}", a.data[0] as i64)
-                } else {
-                    fmt_scalar(a.data[0], fmt)
+                if *c == NumClass::Double {
+                    return format!("{} = {}\n\n", name, fmt_scalar(a.data[0], fmt));
+                }
+                // Other classes name the class above the value.
+                let s = match c {
+                    NumClass::Logical | NumClass::Int(_) => format!("{}", a.data[0] as i64),
+                    _ => fmt_scalar(a.data[0], fmt),
                 };
-                return format!("{} = {}\n\n", name, s);
+                return format!(
+                    "{} =\n\n  {}\n\n{:>w$}\n\n",
+                    name,
+                    c.name(),
+                    s,
+                    w = s.len() + 3
+                );
             }
             if a.is_empty() {
                 if a.rows == 0 && a.cols == 0 && *c == NumClass::Double {
@@ -569,6 +578,10 @@ pub fn display(name: &str, v: &Value, fmt: Format) -> String {
             name,
             f.text()
         ),
+        // Model text starts with its own spacer line.
+        Value::Obj(o) if crate::builtins::control::is_lti(v) && o.class != "frd" => {
+            format!("{} =\n{}\n", name, crate::builtins::object_text(o, fmt))
+        }
         Value::Obj(o) => format!("{} =\n\n{}\n", name, crate::builtins::object_text(o, fmt)),
         Value::Inst(o) => format!("{} = \n\n{}\n", name, instance_body(o, fmt)),
         Value::Complex(a) if a.numel() == 1 => {

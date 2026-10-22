@@ -565,15 +565,31 @@ pub fn register(it: &mut Interp) {
             Err(e) => Err(e),
         }
     });
-    b.insert("evalin", |it, a, _| {
-        check_args(&a, 2, 2)?;
+    b.insert("evalin", |it, a, nargout| {
+        check_args(&a, 2, 3)?;
+        let ws = a[0].text()?;
         let code = a[1].text()?;
-        // Base and caller both run in the current frame's base for simplicity.
-        let saved: Vec<crate::interp::Frame> = it.frames.drain(1..).collect();
-        let r = it.eval_string(&code);
+        // The caller is the frame below the function that called evalin.
+        let target = if ws == "base" {
+            0
+        } else {
+            it.frames.len().saturating_sub(2)
+        };
+        let saved: Vec<crate::interp::Frame> = it.frames.drain(target + 1..).collect();
+        let r = if nargout > 0 {
+            crate::parser::parse_expression(&code).and_then(|e| it.eval_multi(&e, nargout))
+        } else {
+            it.eval_string(&code).map(|_| Vec::new())
+        };
+        let r = match r {
+            Err(e) if a.len() == 3 && !e.interrupt => {
+                let catch = a[2].text()?;
+                it.eval_string(&catch).map(|_| Vec::new())
+            }
+            r => r,
+        };
         it.frames.extend(saved);
-        r?;
-        none()
+        r
     });
     b.insert("assignin", |it, a, _| {
         check_args(&a, 3, 3)?;
