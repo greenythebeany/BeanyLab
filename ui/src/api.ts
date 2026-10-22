@@ -176,7 +176,7 @@ export async function pickFolder(current: string): Promise<string | null> {
 export async function pickOpenFile(current: string): Promise<string | null> {
   if (tauri) {
     const d = await import("@tauri-apps/plugin-dialog");
-    const r = await d.open({ defaultPath: current, filters: [{ name: "Code and model files", extensions: ["m", "slx", "mdl", "bmdl"] }, { name: "All files", extensions: ["*"] }] });
+    const r = await d.open({ defaultPath: current, filters: [{ name: "Code and model files", extensions: ["m", "slx", "mdl", "bmdl", "mat", "mltbx"] }, { name: "All files", extensions: ["*"] }] });
     return typeof r === "string" ? r : null;
   }
   return window.prompt("File path", current);

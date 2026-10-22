@@ -867,6 +867,12 @@ function runModel(t: Tab): Promise<void> {
 async function openPath(path: string) {
   const existing = tabs.find((t) => (t.kind === "code" || t.kind === "model") && t.path && samePath(t.path, path));
   if (existing) { activate(existing); return; }
+  if (/\.mat$/i.test(path)) {
+    const c = `load('${path.replace(/'/g, "''")}')`;
+    addHistory(c);
+    execute(c, true);
+    return;
+  }
   if (/\.mltbx$/i.test(path)) {
     const c = `matlab.addons.install('${path.replace(/'/g, "''")}')`;
     addHistory(c);
@@ -1008,7 +1014,7 @@ async function refreshFiles() {
   el.innerHTML = "";
   for (const f of entries) {
     const row = document.createElement("div");
-    row.className = "frow" + (/\.(m|bmdl|slx|mdl|mltbx)$/i.test(f.name) ? " code" : "");
+    row.className = "frow" + (/\.(m|bmdl|slx|mdl|mltbx|mat)$/i.test(f.name) ? " code" : "");
     row.innerHTML = `${fileIcon(f.name, f.is_dir)}<span class="name"></span>`;
     (row.querySelector(".name") as HTMLElement).textContent = f.name;
     row.title = f.path;
@@ -1027,6 +1033,7 @@ async function refreshFiles() {
       if (f.is_dir) items.push({ label: "Open folder", icon: "open", run: () => setCwd(f.path) });
       else items.push({ label: "Open", icon: "open", run: () => openPath(f.path) });
       if (/\.m$/i.test(f.name)) items.push({ label: "Run", icon: "run", run: () => runPath(f.path) });
+      if (/\.mat$/i.test(f.name)) items.push({ label: "Load into Workspace", icon: "open", run: () => openPath(f.path) });
       if (MODEL_RE.test(f.name)) items.push({ label: "Simulate", icon: "run", run: () => { const c = `sim('${f.name.replace(MODEL_RE, "")}')`; addHistory(c); execute(c, true); } });
       if (f.is_dir) items.push({ label: "Add to Path", icon: "path", run: () => execute(`addpath('${f.path}')`, true) });
       menu(e, items);
