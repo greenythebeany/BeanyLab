@@ -34,6 +34,8 @@ pub enum UnOp {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Num(f64),
+    /// Imaginary literal (`2i`).
+    Imag(f64),
     Char(String),
     Str(String),
     Ident(String),
@@ -45,6 +47,8 @@ pub enum Expr {
     Binary(BinOp, Box<Expr>, Box<Expr>),
     /// `'` (conjugate transpose); `.'` is identical while complex numbers are unsupported.
     Transpose(Box<Expr>),
+    /// `.'`: transpose without conjugation.
+    DotTranspose(Box<Expr>),
     Range(Box<Expr>, Option<Box<Expr>>, Box<Expr>),
     Index(Box<Expr>, Vec<Expr>),
     CellIndex(Box<Expr>, Vec<Expr>),

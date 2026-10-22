@@ -355,6 +355,8 @@ fn flatten_args(args: &[Value]) -> MResult<Vec<PArg>> {
                     o.class.name
                 ))
             }
+            // Numeric conversions print only the real part.
+            Value::Complex(c) => out.extend(c.data.iter().map(|z| PArg::Num(z.re))),
         }
     }
     Ok(out)

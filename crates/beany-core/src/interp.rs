@@ -60,6 +60,8 @@ pub struct Interp {
     pub globals: HashMap<String, Value>,
     pub persistents: HashMap<String, HashMap<String, Value>>,
     pub builtins: HashMap<&'static str, Builtin>,
+    /// Versions of builtins used when an argument is complex.
+    pub complex_builtins: HashMap<&'static str, Builtin>,
     pub cwd: PathBuf,
     pub path: Vec<PathBuf>,
     cache: HashMap<PathBuf, (Option<SystemTime>, Arc<FileUnit>)>,
@@ -110,6 +112,7 @@ impl Interp {
             globals: HashMap::new(),
             persistents: HashMap::new(),
             builtins: HashMap::new(),
+            complex_builtins: HashMap::new(),
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             path: Vec::new(),
             cache: HashMap::new(),
@@ -820,6 +823,7 @@ impl Interp {
     pub fn eval_multi(&mut self, e: &Expr, nargout: usize) -> MResult<Vec<Value>> {
         Ok(match e {
             Expr::Num(n) => vec![Value::num(*n)],
+            Expr::Imag(n) => vec![Value::Complex(Array::scalar(C64::new(0.0, *n)))],
             Expr::Char(s) => vec![Value::chars(s)],
             Expr::Str(s) => vec![Value::string(s)],
             Expr::Colon => vec![Value::chars(":")],
@@ -896,6 +900,16 @@ impl Interp {
                             return Ok(vec![self.object_operator(m, "'", vec![v])?]);
                         }
                     }
+                }
+                if let Value::Complex(a) = &v {
+                    return Ok(vec![Value::Complex(a.transpose().map(|z| z.conj()))]);
+                }
+                vec![v.transpose()?]
+            }
+            Expr::DotTranspose(a) => {
+                let v = self.eval(a)?;
+                if let Value::Inst(_) = v {
+                    return Ok(vec![self.object_operator("transpose", ".'", vec![v])?]);
                 }
                 vec![v.transpose()?]
             }
@@ -1232,7 +1246,12 @@ impl Interp {
         if let Some(p) = self.find_file(name, false) {
             return self.call_file(&p, args, nargout);
         }
-        if let Some(b) = self.builtins.get(name).copied() {
+        let complex = if args.iter().any(Value::is_complex) {
+            self.complex_builtins.get(name).copied()
+        } else {
+            None
+        };
+        if let Some(b) = complex.or_else(|| self.builtins.get(name).copied()) {
             self.last_builtin = name.to_string();
             return b(self, args, nargout).map_err(|mut e| {
                 if e.origin.is_none()
@@ -1647,7 +1666,7 @@ fn empty_like(rhs: &Value) -> Value {
             keys: s.keys.clone(),
             arr: Array::empty(),
         }),
-        Value::Func(_) | Value::Obj(_) | Value::Inst(_) => Value::empty(),
+        Value::Func(_) | Value::Obj(_) | Value::Inst(_) | Value::Complex(_) => Value::empty(),
     }
 }
 
@@ -1673,6 +1692,10 @@ fn paren_assign(base: Value, idx: &[Idx], rhs: Value) -> MResult<Value> {
                 let mut s = o.props();
                 s.arr.delete(idx)?;
                 return Ok(Value::Inst(Box::new(o.with_props(s))));
+            }
+            Value::Complex(a) => {
+                a.delete(idx)?;
+                return Ok(Value::complex(a.clone()));
             }
         }
         return Ok(base);
@@ -1782,6 +1805,14 @@ fn paren_assign(base: Value, idx: &[Idx], rhs: Value) -> MResult<Value> {
             Value::Struct(s)
         }
         (Value::Num(..), f @ Value::Func(_)) if base_empty => f,
+        (b @ (Value::Num(..) | Value::Complex(_)), r @ (Value::Num(..) | Value::Complex(_)))
+            if b.is_complex() || r.is_complex() =>
+        {
+            let mut a = b.to_cplx()?;
+            let v = r.to_cplx()?;
+            a.assign(idx, &v, &C64::new(0.0, 0.0))?;
+            Value::complex(a)
+        }
         (Value::Inst(a), Value::Inst(b)) if Arc::ptr_eq(&a.class, &b.class) && !a.is_handle() => {
             let mut s = a.props();
             let r = b.props();

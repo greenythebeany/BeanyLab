@@ -906,3 +906,63 @@ fn folder_class_methods_and_private_functions() {
     assert_eq!(num(&it, "t"), vec![15.0]);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---------------- complex numbers ----------------
+
+fn cplx(it: &Interp, name: &str) -> Vec<(f64, f64)> {
+    match it.get_var(name).unwrap() {
+        beany_core::value::Value::Complex(a) => a.data.iter().map(|z| (z.re, z.im)).collect(),
+        v => v.to_num().unwrap().data.iter().map(|x| (*x, 0.0)).collect(),
+    }
+}
+
+fn near(a: &[(f64, f64)], b: &[(f64, f64)]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(p, q)| (p.0 - q.0).abs() < 1e-9 && (p.1 - q.1).abs() < 1e-9)
+}
+
+#[test]
+fn complex_literals_arithmetic_and_parts() {
+    let it = run("z = 3 + 4i; w = z * (1 - 2j); a = abs(z); r = real(w); m = imag(w); c = z'; t = [1+2i 3].'; \
+                  s = sqrt(-4); l = log(-1); p = (-8)^(1/3); q = z / 0; e = exp(1i*pi); k = i^2; zz = complex(1, 0); \
+                  b = z == 3+4i; n = [1 2] + 1i; x = sum([1+1i, 2-3i]); y = max([1, -3i, 2]);");
+    assert!(near(&cplx(&it, "w"), &[(11.0, -2.0)]));
+    assert_eq!(num(&it, "a"), vec![5.0]);
+    assert!(near(&cplx(&it, "c"), &[(3.0, -4.0)]));
+    assert!(near(&cplx(&it, "t"), &[(1.0, 2.0), (3.0, 0.0)]));
+    assert!(near(&cplx(&it, "s"), &[(0.0, 2.0)]));
+    assert!(near(&cplx(&it, "l"), &[(0.0, std::f64::consts::PI)]));
+    assert!(near(&cplx(&it, "p"), &[(1.0, 3f64.sqrt())]));
+    assert!(near(&cplx(&it, "e"), &[(-1.0, 0.0)]) || cplx(&it, "e")[0].1.abs() < 1e-15);
+    assert!(near(&cplx(&it, "k"), &[(-1.0, 0.0)]));
+    assert!(
+        it.get_var("zz").unwrap().is_complex(),
+        "complex() keeps the complex type"
+    );
+    assert_eq!(num(&it, "b"), vec![1.0]);
+    assert!(near(&cplx(&it, "x"), &[(3.0, -2.0)]));
+    assert!(near(&cplx(&it, "y"), &[(0.0, -3.0)]));
+}
+
+#[test]
+fn complex_roots_eig_fft_and_display() {
+    let mut it = run("r = roots([1 0 1]); e = eig([0 -1; 1 0]); f = fft([1 2 3 4]); g = ifft(f); h = fft([1 0 0 0 0]); \
+                      p = poly([1i -1i]); v = polyval([1 0 1], 1i); z = 1 + 2i");
+    assert!(near(&cplx(&it, "r"), &[(0.0, 1.0), (0.0, -1.0)]));
+    assert!(near(&cplx(&it, "e"), &[(0.0, 1.0), (0.0, -1.0)]));
+    assert!(near(
+        &cplx(&it, "f"),
+        &[(10.0, 0.0), (-2.0, 2.0), (-2.0, 0.0), (-2.0, -2.0)]
+    ));
+    assert!(near(
+        &cplx(&it, "g"),
+        &[(1.0, 0.0), (2.0, 0.0), (3.0, 0.0), (4.0, 0.0)]
+    ));
+    assert!(near(&cplx(&it, "h"), &[(1.0, 0.0); 5]));
+    assert_eq!(num(&it, "p"), vec![1.0, 0.0, 1.0]);
+    assert!(near(&cplx(&it, "v"), &[(0.0, 0.0)]));
+    let out = it.take_output();
+    assert!(out.contains("z = 1.0000 + 2.0000i"), "{}", out);
+}

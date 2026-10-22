@@ -170,6 +170,7 @@ impl<'a> Parser<'a> {
     fn err(&self, msg: &str) -> MError {
         let found = match self.tok() {
             Tok::Num(n) => format!("{}", n),
+            Tok::Imag(n) => format!("{}i", n),
             Tok::Ident(s) => s.clone(),
             Tok::Kw(k) => format!("{:?}", k).to_lowercase(),
             Tok::Char(s) => format!("'{}'", s),
@@ -938,9 +939,13 @@ impl<'a> Parser<'a> {
                         _ => return Err(self.err("Expected field name")),
                     }
                 }
-                Tok::Op("'") | Tok::Op(".'") => {
+                Tok::Op("'") => {
                     self.bump();
                     e = Expr::Transpose(Box::new(e));
+                }
+                Tok::Op(".'") => {
+                    self.bump();
+                    e = Expr::DotTranspose(Box::new(e));
                 }
                 _ => break,
             }
@@ -984,6 +989,7 @@ impl<'a> Parser<'a> {
         let t = self.bump();
         match t.tok {
             Tok::Num(n) => Ok(Expr::Num(n)),
+            Tok::Imag(n) => Ok(Expr::Imag(n)),
             Tok::Char(s) => Ok(Expr::Char(s)),
             Tok::Str(s) => Ok(Expr::Str(s)),
             Tok::Ident(s)

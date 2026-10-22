@@ -115,6 +115,82 @@ pub fn fmt_scalar(x: f64, fmt: Format) -> String {
     }
 }
 
+/// One part of a complex number: fixed decimals, or exponent form for `sci`.
+fn fmt_part(x: f64, fmt: Format, sci: bool) -> String {
+    if let Some(s) = fmt_special(x.abs()) {
+        return s;
+    }
+    let decimals = if fmt == Format::Long { 15 } else { 4 };
+    if sci {
+        let s = format!("{:.*e}", decimals, x.abs());
+        let (m, e) = s.split_once('e').unwrap();
+        let e: i32 = e.parse().unwrap();
+        format!("{}e{}{:02}", m, if e < 0 { '-' } else { '+' }, e.abs())
+    } else {
+        format!("{:.*}", decimals, x.abs())
+    }
+}
+
+/// Use exponent form when the magnitudes are too large or small for fixed decimals.
+fn cplx_sci(zs: &[C64]) -> bool {
+    let m = zs
+        .iter()
+        .flat_map(|z| [z.re.abs(), z.im.abs()])
+        .filter(|x| x.is_finite())
+        .fold(0.0f64, f64::max);
+    m >= 1e5 || (m > 0.0 && m < 1e-4)
+}
+
+/// `1.0000 + 2.0000i` style text for a complex number.
+pub fn fmt_cplx(z: C64, fmt: Format, sci: bool) -> String {
+    let re = fmt_part(z.re, fmt, sci);
+    let im = fmt_part(z.im, fmt, sci);
+    let re = if z.re < 0.0 { format!("-{}", re) } else { re };
+    let sign = if z.im < 0.0 { '-' } else { '+' };
+    format!("{} {} {}i", re, sign, im)
+}
+
+/// Compact `1+2i` text (num2str and summaries).
+pub fn cplx_to_str(z: C64) -> String {
+    let im = num_to_str(z.im.abs());
+    let sign = if z.im < 0.0 { '-' } else { '+' };
+    format!("{}{}{}i", num_to_str(z.re), sign, im)
+}
+
+fn cplx_body(a: &Array<C64>, fmt: Format) -> String {
+    if a.is_empty() {
+        return String::new();
+    }
+    let sci = cplx_sci(&a.data);
+    let cells: Vec<String> = a.data.iter().map(|z| fmt_cplx(*z, fmt, sci)).collect();
+    let width = cells.iter().map(|s| s.chars().count()).max().unwrap_or(1) + 3;
+    let per_line = (WRAP / width).max(1);
+    let mut out = String::new();
+    let chunks: Vec<(usize, usize)> = (0..a.cols)
+        .step_by(per_line)
+        .map(|s| (s, (s + per_line).min(a.cols)))
+        .collect();
+    for (ci, (c0, c1)) in chunks.iter().enumerate() {
+        if chunks.len() > 1 {
+            if c1 - c0 == 1 {
+                out.push_str(&format!("  Column {}\n\n", c0 + 1));
+            } else {
+                out.push_str(&format!("  Columns {} through {}\n\n", c0 + 1, c1));
+            }
+        }
+        for r in 0..a.rows {
+            for c in *c0..*c1 {
+                out.push_str(&format!("{:>w$}", cells[c * a.rows + r], w = width));
+            }
+            out.push('\n');
+        }
+        if ci + 1 < chunks.len() {
+            out.push('\n');
+        }
+    }
+    out
+}
+
 fn dims_str(r: usize, c: usize) -> String {
     format!("{}×{}", r, c)
 }
@@ -251,6 +327,8 @@ pub fn summary(v: &Value, fmt: Format) -> String {
             let (r, c) = o.dims();
             format!("[{} {}]", dims_str(r, c), o.class.name)
         }
+        Value::Complex(a) if a.numel() == 1 => fmt_cplx(a.data[0], fmt, cplx_sci(&a.data)),
+        Value::Complex(a) => format!("[{} double]", dims_str(a.rows, a.cols)),
     }
 }
 
@@ -301,6 +379,11 @@ pub fn disp(v: &Value, fmt: Format) -> String {
         Value::Func(f) => format!("    {}\n", f.text()),
         Value::Obj(o) => crate::builtins::object_text(o, fmt),
         Value::Inst(o) => instance_body(o, fmt),
+        Value::Complex(a) if a.numel() == 1 => {
+            let t = fmt_cplx(a.data[0], fmt, cplx_sci(&a.data));
+            format!("{:>w$}\n", t, w = t.len() + 3)
+        }
+        Value::Complex(a) => cplx_body(a, fmt),
     }
 }
 
@@ -488,5 +571,13 @@ pub fn display(name: &str, v: &Value, fmt: Format) -> String {
         ),
         Value::Obj(o) => format!("{} =\n\n{}\n", name, crate::builtins::object_text(o, fmt)),
         Value::Inst(o) => format!("{} = \n\n{}\n", name, instance_body(o, fmt)),
+        Value::Complex(a) if a.numel() == 1 => {
+            format!(
+                "{} = {}\n\n",
+                name,
+                fmt_cplx(a.data[0], fmt, cplx_sci(&a.data))
+            )
+        }
+        Value::Complex(a) => format!("{} =\n\n{}\n", name, cplx_body(a, fmt)),
     }
 }

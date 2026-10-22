@@ -1,6 +1,7 @@
 //! Built-in function library.
 
 pub mod addons;
+mod complex;
 mod core;
 mod data;
 mod math;
@@ -32,6 +33,7 @@ pub fn register(it: &mut Interp) {
     crate::sim::run::register(it);
     crate::sim::ode::register(it);
     addons::register(it);
+    complex::register(it);
 }
 
 pub(crate) type R = MResult<Vec<Value>>;

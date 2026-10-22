@@ -7,6 +7,9 @@ use crate::ast::Expr;
 use crate::error::{MError, MResult};
 use crate::merr;
 
+/// Complex double.
+pub type C64 = nalgebra::Complex<f64>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Array<T> {
     pub rows: usize,
@@ -560,6 +563,8 @@ pub enum Value {
     Obj(Box<Object>),
     /// Object of a user-defined class.
     Inst(Box<Instance>),
+    /// Complex double array (real arrays never use this variant).
+    Complex(Array<C64>),
 }
 
 /// An object (or object array) of a class defined in `.m` code.
@@ -644,6 +649,24 @@ impl Value {
     pub fn cell_row(v: Vec<Value>) -> Value {
         Value::Cell(Array::row(v))
     }
+    /// A complex result, or a real one when every imaginary part is zero.
+    pub fn complex(a: Array<C64>) -> Value {
+        if a.data.iter().all(|z| z.im == 0.0) {
+            Value::mat(a.map(|z| z.re))
+        } else {
+            Value::Complex(a)
+        }
+    }
+    pub fn is_complex(&self) -> bool {
+        matches!(self, Value::Complex(_))
+    }
+    /// Complex view of a numeric value.
+    pub fn to_cplx(&self) -> MResult<Array<C64>> {
+        match self {
+            Value::Complex(a) => Ok(a.clone()),
+            v => Ok(v.to_num()?.map(|x| C64::new(*x, 0.0))),
+        }
+    }
 
     pub fn dims(&self) -> (usize, usize) {
         match self {
@@ -655,6 +678,7 @@ impl Value {
             Value::Func(_) => (1, 1),
             Value::Obj(o) => o.dims(),
             Value::Inst(o) => o.dims(),
+            Value::Complex(a) => (a.rows, a.cols),
         }
     }
     pub fn numel(&self) -> usize {
@@ -674,6 +698,7 @@ impl Value {
             Value::Func(_) => "function_handle",
             Value::Obj(o) => o.class,
             Value::Inst(o) => o.class.name,
+            Value::Complex(_) => "double",
         }
     }
     pub fn is_numeric_like(&self) -> bool {
@@ -690,6 +715,9 @@ impl Value {
                 .parse::<f64>()
                 .map(Array::scalar)
                 .or(Ok(Array::scalar(f64::NAN))),
+            Value::Complex(_) => Err(merr!(
+                "This function does not support complex values yet; use real, imag or abs first."
+            )),
             other => Err(merr!("Expected numeric input, got {}", other.class_name())),
         }
     }
@@ -762,6 +790,9 @@ impl Value {
                 "Conversion to logical from {} is not possible.",
                 o.class.name
             )),
+            Value::Complex(a) => {
+                Ok(!a.is_empty() && a.data.iter().all(|z| z.re != 0.0 || z.im != 0.0))
+            }
         }
     }
 
@@ -798,6 +829,7 @@ impl Value {
                     self.clone()
                 }
             },
+            Value::Complex(a) => Value::complex(a.index(idx)?),
         })
     }
 
@@ -821,6 +853,7 @@ impl Value {
                 }
                 InstData::Handle(_) => self.clone(),
             },
+            Value::Complex(a) => Value::Complex(a.transpose()),
         })
     }
 
@@ -845,6 +878,7 @@ impl Value {
                 InstData::Handle(_) if r * c == 1 => self.clone(),
                 InstData::Handle(_) => return Err(merr!("Cannot reshape a {}", o.class.name)),
             },
+            Value::Complex(a) => Value::Complex(a.reshape(r, c)?),
         })
     }
 
@@ -896,6 +930,11 @@ impl Value {
                     .collect(),
                 InstData::Handle(_) => vec![self.clone()],
             },
+            Value::Complex(a) => a
+                .data
+                .iter()
+                .map(|z| Value::complex(Array::scalar(*z)))
+                .collect(),
         }
     }
 
@@ -982,6 +1021,10 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Str(x), Value::Char(_)) if x.numel() == 1 => b.text().is_ok_and(|t| t == x.data[0]),
         (Value::Char(_), Value::Str(y)) if y.numel() == 1 => a.text().is_ok_and(|t| t == y.data[0]),
         (Value::Func(x), Value::Func(y)) => x.text() == y.text(),
+        (Value::Complex(_), _) | (_, Value::Complex(_)) => match (a.to_cplx(), b.to_cplx()) {
+            (Ok(x), Ok(y)) => x.rows == y.rows && x.cols == y.cols && x.data == y.data,
+            _ => false,
+        },
         (Value::Inst(x), Value::Inst(y)) => {
             Arc::ptr_eq(&x.class, &y.class)
                 && match (&x.data, &y.data) {

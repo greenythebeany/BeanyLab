@@ -1015,6 +1015,7 @@ pub fn bytes_of(v: &Value) -> usize {
         Value::Func(_) => 32,
         Value::Obj(o) => o.props.arr.data[0].iter().map(bytes_of).sum::<usize>() + 64,
         Value::Inst(o) => bytes_of(&Value::Struct(o.props())),
+        Value::Complex(a) => a.numel() * 16,
     }
 }
 

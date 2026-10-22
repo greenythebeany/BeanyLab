@@ -22,6 +22,16 @@ pub fn broadcast(
     f: impl Fn(f64, f64) -> f64,
     opname: &str,
 ) -> MResult<Array<f64>> {
+    broadcast_t(a, b, f, opname)
+}
+
+/// [`broadcast`] for any element type.
+pub fn broadcast_t<T: Copy, U: Clone>(
+    a: &Array<T>,
+    b: &Array<T>,
+    f: impl Fn(T, T) -> U,
+    opname: &str,
+) -> MResult<Array<U>> {
     if a.rows == b.rows && a.cols == b.cols {
         return Ok(Array::new(
             a.rows,
@@ -106,6 +116,15 @@ pub fn unary(op: UnOp, v: &Value) -> MResult<Value> {
     if let Value::Str(_) = v {
         return Err(merr!("Unary operators are not supported for string"));
     }
+    if let Value::Complex(a) = v {
+        return Ok(match op {
+            UnOp::Neg => Value::Complex(a.map(|z| -z)),
+            UnOp::Plus => v.clone(),
+            UnOp::Not => {
+                Value::logical(a.map(|z| if z.re == 0.0 && z.im == 0.0 { 1.0 } else { 0.0 }))
+            }
+        });
+    }
     let a = v.to_num()?;
     Ok(match op {
         UnOp::Neg => finish(a.map(|x| -x), keep_class(v)),
@@ -142,6 +161,9 @@ pub fn binary(op: BinOp, l: &Value, r: &Value) -> MResult<Value> {
             "Operator '{}' is not supported for operands of type 'struct'.",
             op_symbol(op)
         ));
+    }
+    if l.is_complex() || r.is_complex() || needs_complex_power(op, l, r) {
+        return complex_binary(op, l, r);
     }
     let a = l.to_num()?;
     let b = r.to_num()?;
@@ -218,6 +240,183 @@ pub fn binary(op: BinOp, l: &Value, r: &Value) -> MResult<Value> {
         BinOp::Or => logic(|x, y| x || y),
         BinOp::AndAnd | BinOp::OrOr => unreachable!("short-circuit handled by interpreter"),
     }
+}
+
+/// A negative base with a fractional exponent gives a complex result.
+fn needs_complex_power(op: BinOp, l: &Value, r: &Value) -> bool {
+    if !matches!(op, BinOp::ElPow | BinOp::MatPow) {
+        return false;
+    }
+    match (l, r) {
+        (
+            Value::Num(a, NumClass::Double | NumClass::Single),
+            Value::Num(b, NumClass::Double | NumClass::Single),
+        ) => {
+            (op == BinOp::ElPow || (a.is_scalar() && b.is_scalar()))
+                && a.data.iter().any(|x| *x < 0.0)
+                && b.data.iter().any(|y| y.fract() != 0.0 && y.is_finite())
+        }
+        _ => false,
+    }
+}
+
+pub fn cpow(x: C64, y: C64) -> C64 {
+    if y.im == 0.0 && y.re.fract() == 0.0 && y.re.abs() < 1e9 {
+        return x.powi(y.re as i32);
+    }
+    if x.re == 0.0 && x.im == 0.0 {
+        return if y.re > 0.0 {
+            C64::new(0.0, 0.0)
+        } else {
+            C64::new(f64::INFINITY, 0.0)
+        };
+    }
+    (y * x.ln()).exp()
+}
+
+fn cdiv(x: C64, y: C64) -> C64 {
+    if y.re == 0.0 && y.im == 0.0 {
+        C64::new(x.re / 0.0, if x.im == 0.0 { 0.0 } else { x.im / 0.0 })
+    } else {
+        x / y
+    }
+}
+
+fn to_cmatrix(a: &Array<C64>) -> DMatrix<C64> {
+    DMatrix::from_column_slice(a.rows, a.cols, &a.data)
+}
+
+fn from_cmatrix(m: &DMatrix<C64>) -> Array<C64> {
+    Array::new(m.nrows(), m.ncols(), m.as_slice().to_vec())
+}
+
+pub fn cmatmul(a: &Array<C64>, b: &Array<C64>) -> Array<C64> {
+    let mut out = vec![C64::new(0.0, 0.0); a.rows * b.cols];
+    for j in 0..b.cols {
+        for k in 0..a.cols {
+            let bkj = b.data[j * b.rows + k];
+            for i in 0..a.rows {
+                out[j * a.rows + i] += a.data[k * a.rows + i] * bkj;
+            }
+        }
+    }
+    Array::new(a.rows, b.cols, out)
+}
+
+pub fn cmldivide(a: &Array<C64>, b: &Array<C64>) -> MResult<Array<C64>> {
+    if a.rows != b.rows {
+        return Err(merr!("Matrix dimensions must agree."));
+    }
+    let am = to_cmatrix(a);
+    let bm = to_cmatrix(b);
+    if a.rows == a.cols {
+        if let Some(x) = am.clone().lu().solve(&bm) {
+            return Ok(from_cmatrix(&x));
+        }
+    }
+    let svd = am.svd(true, true);
+    let x = svd.solve(&bm, 1e-12).map_err(|e| merr!("{}", e))?;
+    Ok(from_cmatrix(&x))
+}
+
+fn complex_binary(op: BinOp, l: &Value, r: &Value) -> MResult<Value> {
+    let a = l.to_cplx()?;
+    let b = r.to_cplx()?;
+    let sym = op_symbol(op);
+    let cmp = |f: fn(C64, C64) -> bool| -> MResult<Value> {
+        Ok(Value::logical(broadcast_t(
+            &a,
+            &b,
+            |x, y| if f(x, y) { 1.0 } else { 0.0 },
+            sym,
+        )?))
+    };
+    let nz = |z: C64| z.re != 0.0 || z.im != 0.0;
+    Ok(match op {
+        BinOp::Add => Value::complex(broadcast_t(&a, &b, |x, y| x + y, sym)?),
+        BinOp::Sub => Value::complex(broadcast_t(&a, &b, |x, y| x - y, sym)?),
+        BinOp::ElMul => Value::complex(broadcast_t(&a, &b, |x, y| x * y, sym)?),
+        BinOp::ElDiv => Value::complex(broadcast_t(&a, &b, cdiv, sym)?),
+        BinOp::ElLDiv => Value::complex(broadcast_t(&a, &b, |x, y| cdiv(y, x), sym)?),
+        BinOp::ElPow => Value::complex(broadcast_t(&a, &b, cpow, sym)?),
+        BinOp::MatMul => {
+            if a.is_scalar() || b.is_scalar() {
+                Value::complex(broadcast_t(&a, &b, |x, y| x * y, sym)?)
+            } else if a.cols != b.rows {
+                return Err(merr!("Incorrect dimensions for matrix multiplication. Check that the number of columns in the first matrix matches the number of rows in the second matrix. To operate on each element of the matrix individually, use TIMES (.*) for elementwise multiplication."));
+            } else {
+                Value::complex(cmatmul(&a, &b))
+            }
+        }
+        BinOp::MatDiv => {
+            if b.is_scalar() {
+                Value::complex(broadcast_t(&a, &b, cdiv, sym)?)
+            } else {
+                Value::complex(cmldivide(&b.transpose(), &a.transpose())?.transpose())
+            }
+        }
+        BinOp::MatLDiv => {
+            if a.is_scalar() {
+                Value::complex(broadcast_t(&a, &b, |x, y| cdiv(y, x), sym)?)
+            } else {
+                Value::complex(cmldivide(&a, &b)?)
+            }
+        }
+        BinOp::MatPow => {
+            if a.is_scalar() && b.is_scalar() {
+                Value::complex(Array::scalar(cpow(a.data[0], b.data[0])))
+            } else if b.is_scalar()
+                && a.rows == a.cols
+                && b.data[0].im == 0.0
+                && b.data[0].re.fract() == 0.0
+            {
+                let p = b.data[0].re as i64;
+                let mut base = if p < 0 {
+                    from_cmatrix(
+                        &to_cmatrix(&a)
+                            .try_inverse()
+                            .ok_or_else(|| merr!("Matrix is singular to working precision."))?,
+                    )
+                } else {
+                    a.clone()
+                };
+                let mut e = p.unsigned_abs();
+                let mut result = eye(a.rows).map(|x| C64::new(*x, 0.0));
+                while e > 0 {
+                    if e & 1 == 1 {
+                        result = cmatmul(&result, &base);
+                    }
+                    base = cmatmul(&base, &base);
+                    e >>= 1;
+                }
+                Value::complex(result)
+            } else {
+                return Err(merr!(
+                    "Non-integer or complex matrix powers are not supported yet."
+                ));
+            }
+        }
+        BinOp::Eq => cmp(|x, y| x == y)?,
+        BinOp::Ne => cmp(|x, y| x != y)?,
+        // Ordering compares real parts only.
+        BinOp::Lt => cmp(|x, y| x.re < y.re)?,
+        BinOp::Le => cmp(|x, y| x.re <= y.re)?,
+        BinOp::Gt => cmp(|x, y| x.re > y.re)?,
+        BinOp::Ge => cmp(|x, y| x.re >= y.re)?,
+        BinOp::And => Value::logical(broadcast_t(
+            &a,
+            &b,
+            |x, y| if nz(x) && nz(y) { 1.0 } else { 0.0 },
+            sym,
+        )?),
+        BinOp::Or => Value::logical(broadcast_t(
+            &a,
+            &b,
+            |x, y| if nz(x) || nz(y) { 1.0 } else { 0.0 },
+            sym,
+        )?),
+        BinOp::AndAnd | BinOp::OrOr => unreachable!("short-circuit handled by interpreter"),
+    })
 }
 
 fn pow(x: f64, y: f64) -> f64 {
@@ -535,6 +734,13 @@ fn concat(vals: Vec<Value>, horiz: bool) -> MResult<Value> {
             });
         }
         return Ok(Value::Char(join(parts, horiz)?));
+    }
+    if vals.iter().any(|v| v.is_complex()) {
+        let mut parts = Vec::new();
+        for v in &vals {
+            parts.push(v.to_cplx()?);
+        }
+        return Ok(Value::Complex(join(parts, horiz)?));
     }
     let mut class: Option<NumClass> = None;
     let mut parts = Vec::new();

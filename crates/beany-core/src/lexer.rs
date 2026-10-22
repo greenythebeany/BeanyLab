@@ -61,6 +61,8 @@ fn keyword(s: &str) -> Option<Kw> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     Num(f64),
+    /// Imaginary literal such as `2i` or `1.5j`.
+    Imag(f64),
     Ident(String),
     Kw(Kw),
     /// Single-quoted char array literal.
@@ -176,9 +178,8 @@ impl<'a> Lexer<'a> {
 
     fn prev_ends_value(&self) -> bool {
         match self.toks.last().map(|t| &t.tok) {
-            Some(Tok::Num(_)) | Some(Tok::Ident(_)) | Some(Tok::Char(_)) | Some(Tok::Str(_)) => {
-                true
-            }
+            Some(Tok::Num(_)) | Some(Tok::Imag(_)) | Some(Tok::Ident(_)) | Some(Tok::Char(_))
+            | Some(Tok::Str(_)) => true,
             Some(Tok::Op(o)) => matches!(*o, ")" | "]" | "}" | "'" | ".'"),
             Some(Tok::Kw(Kw::End)) => !self.brackets.is_empty(),
             _ => false,
@@ -300,7 +301,14 @@ impl<'a> Lexer<'a> {
             }
             if c.is_ascii_digit() || (c == '.' && self.peek(1).is_ascii_digit()) {
                 let n = self.number()?;
-                self.push(Tok::Num(n), start, space);
+                if matches!(self.peek(0), 'i' | 'j')
+                    && !(self.peek(1).is_alphanumeric() || self.peek(1) == '_')
+                {
+                    self.i += 1;
+                    self.push(Tok::Imag(n), start, space);
+                } else {
+                    self.push(Tok::Num(n), start, space);
+                }
                 space = false;
                 continue;
             }
@@ -450,11 +458,6 @@ impl<'a> Lexer<'a> {
             .iter()
             .map(|c| if *c == 'd' || *c == 'D' { 'e' } else { *c })
             .collect();
-        if matches!(self.peek(0), 'i' | 'j')
-            && !(self.peek(1).is_alphanumeric() || self.peek(1) == '_')
-        {
-            return Err(self.err("Complex numbers are not supported yet"));
-        }
         text.parse::<f64>()
             .map_err(|_| self.err(format!("Invalid number '{}'", text)))
     }

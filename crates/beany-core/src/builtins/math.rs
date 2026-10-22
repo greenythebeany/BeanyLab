@@ -996,7 +996,7 @@ fn norm(_: &mut Interp, a: Vec<Value>, _: usize) -> R {
     one(Value::num(r))
 }
 
-fn is_symmetric(m: &Array<f64>) -> bool {
+pub(crate) fn is_symmetric(m: &Array<f64>) -> bool {
     if m.rows != m.cols {
         return false;
     }
@@ -1011,7 +1011,7 @@ fn is_symmetric(m: &Array<f64>) -> bool {
     true
 }
 
-fn eig(it: &mut Interp, a: Vec<Value>, nargout: usize) -> R {
+pub(crate) fn eig(it: &mut Interp, a: Vec<Value>, nargout: usize) -> R {
     check_args(&a, 1, 1)?;
     let m = a[0].to_num()?;
     if m.rows != m.cols {

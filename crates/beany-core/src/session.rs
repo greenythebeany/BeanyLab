@@ -164,6 +164,7 @@ impl Session {
                 Value::Func(f) => f.text(),
                 Value::Obj(o) => o.class.to_string(),
                 Value::Inst(o) => o.class.name.to_string(),
+                Value::Complex(a) => display::cplx_to_str(*a.get(r, c)),
             }
         };
         let mut cells = Vec::new();
