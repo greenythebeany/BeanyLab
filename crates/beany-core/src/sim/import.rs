@@ -526,7 +526,12 @@ fn convert_system(
         let n_in = declared(0, "in").unwrap_or(1).max(ui);
         let n_out = declared(1, "out").unwrap_or(1).max(uo);
         let full = format!("{}/{}", path, name);
-        let c = convert_block(src, b, &bt, &full, n_in, n_out, warnings);
+        let mut c = convert_block(src, b, &bt, &full, n_in, n_out, warnings);
+        if let Some(o) = param(src, b, "Orientation") {
+            if matches!(o.as_str(), "left" | "up" | "down") {
+                c.params.insert("_orient".into(), o);
+            }
+        }
         if bt == "Goto" && param(src, b, "TagVisibility").as_deref() != Some("global") {
             local_tags.insert(c.params.get("tag").cloned().unwrap_or_default());
         }

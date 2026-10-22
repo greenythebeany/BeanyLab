@@ -1302,7 +1302,7 @@ function showHelp() {
       "                   Ctrl+R comment · Ctrl+T uncomment · Ctrl+/ toggle comment · Ctrl+I smart indent · Ctrl+] / Ctrl+[ indent",
       "                   Ctrl+↑/↓ previous/next section · Ctrl+D open the function at the cursor · Ctrl+F find · Ctrl+H replace · Ctrl+G go to line",
       "  Model editor:    Ctrl+T or F5 run · Space fit · Ctrl+= / Ctrl+- zoom · Alt+1 actual size · double-click empty canvas to add a block",
-      "                   Ctrl+G group into subsystem · Ctrl+U open subsystem · Esc go up · Ctrl+E solver settings · Ctrl+D update diagram",
+      "                   Ctrl+G group into subsystem · Ctrl+R rotate · Ctrl+I flip · Ctrl+U open subsystem · Esc go up · Ctrl+E solver settings · Ctrl+D update diagram",
       "                   Ctrl+L block library · Ctrl+F find block · F2 rename · arrow keys move · Ctrl+C/X/V/Z/Y/A · Delete",
       "  Sections:        start a line with %% to split a script into runnable sections",
       "  help name        shows the leading comment block of name.m",

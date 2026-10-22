@@ -353,9 +353,20 @@ export class ModelEditor {
   }
 
   private portPos(b: BlockSpec, out: boolean, k: number): [number, number] {
+    const [x, y] = this.portLocal(b, out, k);
+    return [b.x + x, b.y + y];
+  }
+
+  /** Port position inside the block, for its orientation. */
+  private portLocal(b: BlockSpec, out: boolean, k: number): [number, number] {
     const [ni, no] = this.portsOf(b);
-    const n = out ? no : ni;
-    return [out ? b.x + b.w : b.x, b.y + (b.h * (k + 0.5)) / Math.max(1, n)];
+    const f = (k + 0.5) / Math.max(1, out ? no : ni);
+    switch (orient(b)) {
+      case "left": return [out ? 0 : b.w, b.h * f];
+      case "down": return [b.w * f, out ? b.h : 0];
+      case "up": return [b.w * f, out ? 0 : b.h];
+      default: return [out ? b.w : 0, b.h * f];
+    }
   }
 
   // ------------------------------------------------------------- render
@@ -394,7 +405,7 @@ export class ModelEditor {
       if (!s || !d) return;
       const [x1, y1] = this.portPos(s, true, l.src.port - 1);
       const [x2, y2] = this.portPos(d, false, l.dst.port - 1);
-      const path = route(x1, y1, x2, y2, s, d);
+      const path = route(x1, y1, x2, y2, s, d, flow(s), flow(d));
       const hit = el("path", { d: path, class: "me-hit" }, g);
       el("path", { d: path, class: "me-line" + (this.selLine === i ? " sel" : ""), "marker-end": "url(#me-arrow)" }, g);
       hit.addEventListener("mousedown", (e) => {
@@ -407,21 +418,23 @@ export class ModelEditor {
     });
     for (const b of m.blocks) {
       const grp = el("g", { transform: `translate(${b.x},${b.y})`, class: "me-block" + (this.selection.has(b.id) ? " sel" : "") + (this.errorBlock && (this.errorBlock === prefix + b.id || this.errorBlock.startsWith(prefix + b.id + "/")) ? " err" : "") }, g);
-      grp.innerHTML = shapeMarkup(b) + glyph(b, this.displays.get(prefix + b.id));
+      grp.innerHTML = rotatedShape(b) + glyph(b, this.displays.get(prefix + b.id));
       const name = el("text", { x: b.w / 2, y: b.h + 14, class: "me-name", "text-anchor": "middle" }, grp);
       name.textContent = b.name;
       const [ni, no] = this.portsOf(b);
+      const [fx, fy] = flow(b);
+      const turn = `rotate(${(Math.atan2(fy, fx) * 180) / Math.PI})`;
       for (let k = 0; k < ni; k++) {
-        const y = (b.h * (k + 0.5)) / ni;
-        const p = el("path", { d: `M-1,${y - 4} L5,${y} L-1,${y + 4}`, class: "me-port in" }, grp);
+        const [x, y] = this.portLocal(b, false, k);
+        const p = el("path", { d: "M-1,-4 L5,0 L-1,4", transform: `translate(${x},${y}) ${turn}`, class: "me-port in" }, grp);
         p.dataset.port = String(k + 1);
-        const hit = el("circle", { cx: 0, cy: y, r: 8, class: "me-port-hit" }, grp);
+        const hit = el("circle", { cx: x, cy: y, r: 8, class: "me-port-hit" }, grp);
         hit.dataset.inport = `${b.id}:${k + 1}`;
       }
       for (let k = 0; k < no; k++) {
-        const y = (b.h * (k + 0.5)) / no;
-        el("path", { d: `M${b.w},${y - 4} L${b.w + 6},${y} L${b.w},${y + 4}`, class: "me-port out" }, grp);
-        const hit = el("circle", { cx: b.w + 3, cy: y, r: 8, class: "me-port-hit out" }, grp);
+        const [x, y] = this.portLocal(b, true, k);
+        el("path", { d: "M0,-4 L6,0 L0,4", transform: `translate(${x},${y}) ${turn}`, class: "me-port out" }, grp);
+        const hit = el("circle", { cx: x + 3 * fx, cy: y + 3 * fy, r: 8, class: "me-port-hit out" }, grp);
         hit.addEventListener("mousedown", (e) => { e.stopPropagation(); this.startWire(b, k + 1, e); });
       }
       grp.addEventListener("mousedown", (e) => this.onBlockDown(b, e));
@@ -694,6 +707,8 @@ export class ModelEditor {
     else if (ctrl && e.key.toLowerCase() === "t") { e.preventDefault(); this.host.run(); }
     else if (e.key === " " && !ctrl) { e.preventDefault(); this.fit(); }
     else if (ctrl && e.key.toLowerCase() === "x") { e.preventDefault(); this.copy(); this.deleteSelection(); }
+    else if (ctrl && e.key.toLowerCase() === "r") { e.preventDefault(); this.turnSelection(e.shiftKey ? -1 : 1); }
+    else if (ctrl && e.key.toLowerCase() === "i") { e.preventDefault(); this.turnSelection(2); }
     else if (ctrl && e.key.toLowerCase() === "g") { e.preventDefault(); this.groupSelection(); }
     else if (ctrl && e.key.toLowerCase() === "u") { e.preventDefault(); const b = this.selectedBlock(); if (b) this.openBlock(b); }
     else if (ctrl && e.key.toLowerCase() === "e") { e.preventDefault(); this.solverDialog(); }
@@ -713,6 +728,27 @@ export class ModelEditor {
       this.changed();
     }
     else if (e.key === "Escape" && this.stack.length) { this.stack.pop(); this.selection.clear(); this.fit(); }
+  }
+
+  /** Rotate the selected blocks by quarter turns clockwise (2 = flip). */
+  private turnSelection(quarters: number) {
+    const sel = this.level.blocks.filter((b) => this.selection.has(b.id));
+    if (!sel.length) return;
+    this.snapshot();
+    for (const b of sel) {
+      const i = ORIENTS.indexOf(orient(b));
+      const next = ORIENTS[(i + quarters + 4) % 4];
+      if (quarters % 2) {
+        const cx = b.x + b.w / 2;
+        const cy = b.y + b.h / 2;
+        [b.w, b.h] = [b.h, b.w];
+        b.x = Math.round(cx - b.w / 2);
+        b.y = Math.round(cy - b.h / 2);
+      }
+      if (next === "right") delete b.params._orient;
+      else b.params._orient = next;
+    }
+    this.changed();
   }
 
   private selectedBlock(): BlockSpec | undefined {
@@ -856,6 +892,8 @@ export class ModelEditor {
     const items: [string, () => void][] = [
       [(b.type === "Subsystem" || b.type === "EnabledSubsystem") ? "Open subsystem" : "Parameters…", () => this.openBlock(b)],
       ["Rename…", () => { const n = prompt("Block name", b.name); if (n && n.trim()) { this.snapshot(); b.name = n.trim(); this.changed(); } }],
+      ["Rotate (Ctrl+R)", () => { this.selection = new Set([b.id]); this.turnSelection(1); }],
+      ["Flip (Ctrl+I)", () => { this.selection = new Set([b.id]); this.turnSelection(2); }],
       ["Delete", () => { this.selection = new Set([b.id]); this.deleteSelection(); }],
     ];
     for (const [text, fn] of items) {
@@ -952,6 +990,26 @@ function label(type: string) {
 }
 
 /** Outline shape of a block. */
+const ORIENTS = ["right", "down", "left", "up"];
+
+function orient(b: BlockSpec): string {
+  return b.params._orient ?? "right";
+}
+
+/** Direction signals flow through the block. */
+function flow(b: BlockSpec): number[] {
+  return { right: [1, 0], down: [0, 1], left: [-1, 0], up: [0, -1] }[orient(b)] ?? [1, 0];
+}
+
+/** The block outline drawn for its orientation (text glyphs stay upright). */
+function rotatedShape(b: BlockSpec): string {
+  const o = orient(b);
+  if (o === "right") return shapeMarkup(b);
+  const upright = o === "left" ? b : { ...b, w: b.h, h: b.w };
+  const t = o === "down" ? `translate(${b.w},0) rotate(90)` : o === "up" ? `translate(0,${b.h}) rotate(-90)` : `translate(${b.w},${b.h}) rotate(180)`;
+  return `<g transform="${t}">${shapeMarkup(upright)}</g>`;
+}
+
 function shapeMarkup(b: BlockSpec): string {
   const { w, h } = b;
   switch (b.type) {
@@ -967,7 +1025,16 @@ function shapeMarkup(b: BlockSpec): string {
 }
 
 /** Orthogonal route from an output port to an input port; feedback lines go around below. */
-function route(x1: number, y1: number, x2: number, y2: number, s: BlockSpec, d: BlockSpec): string {
+function route(x1: number, y1: number, x2: number, y2: number, s: BlockSpec, d: BlockSpec, f1: number[], f2: number[]): string {
+  if (f1[0] !== 1 || f2[0] !== 1) {
+    // Rotated ports: leave and enter along the port direction, with one bend between.
+    const ax = x1 + f1[0] * 14, ay = y1 + f1[1] * 14;
+    const bx = x2 - f2[0] * 14, by = y2 - f2[1] * 14;
+    // Bend first along the port direction unless the target lies behind it.
+    const ahead = f1[0] !== 0 ? (bx - ax) * f1[0] >= 0 : (by - ay) * f1[1] >= 0;
+    const mid = (f1[0] !== 0) === ahead ? `H${bx} V${by}` : `V${by} H${bx}`;
+    return `M${x1 + f1[0] * 6},${y1 + f1[1] * 6} L${ax},${ay} ${mid} L${x2 - f2[0]},${y2 - f2[1]}`;
+  }
   if (x2 - x1 >= 20) {
     const mx = Math.round((x1 + x2) / 2);
     return `M${x1 + 6},${y1} H${mx} V${y2} H${x2 - 1}`;

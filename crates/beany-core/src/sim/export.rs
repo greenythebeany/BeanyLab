@@ -453,6 +453,9 @@ impl Writer {
             ind, ports.0, ports.1
         );
         let _ = writeln!(self.xml, "{}  <P Name=\"Position\">{}</P>", ind, pos);
+        if let Some(o) = b.params.get("_orient") {
+            let _ = writeln!(self.xml, "{}  <P Name=\"Orientation\">{}</P>", ind, esc(o));
+        }
         if let Some(src) = source {
             let _ = writeln!(
                 self.xml,
