@@ -247,6 +247,10 @@ pub fn summary(v: &Value, fmt: Format) -> String {
             let (r, c) = o.dims();
             format!("[{} {}]", dims_str(r, c), o.class)
         }
+        Value::Inst(o) => {
+            let (r, c) = o.dims();
+            format!("[{} {}]", dims_str(r, c), o.class.name)
+        }
     }
 }
 
@@ -296,7 +300,33 @@ pub fn disp(v: &Value, fmt: Format) -> String {
         Value::Struct(s) => struct_body(s, fmt),
         Value::Func(f) => format!("    {}\n", f.text()),
         Value::Obj(o) => crate::builtins::object_text(o, fmt),
+        Value::Inst(o) => instance_body(o, fmt),
     }
+}
+
+/// Default text for an object of a user class: its class and properties.
+pub fn instance_body(o: &Instance, fmt: Format) -> String {
+    let s = o.props();
+    let (r, c) = o.dims();
+    if r * c != 1 {
+        return format!(
+            "  {} {} array with properties:\n\n{}",
+            dims_str(r, c),
+            o.class.name,
+            s.keys
+                .iter()
+                .map(|k| format!("    {}\n", k))
+                .collect::<String>()
+        );
+    }
+    if s.keys.is_empty() {
+        return format!("  {} with no properties.\n", o.class.name);
+    }
+    format!(
+        "  {} with properties:\n\n{}",
+        o.class.name,
+        struct_body(&s, fmt)
+    )
 }
 
 fn cell_body(a: &Array<Value>, fmt: Format) -> String {
@@ -457,5 +487,6 @@ pub fn display(name: &str, v: &Value, fmt: Format) -> String {
             f.text()
         ),
         Value::Obj(o) => format!("{} =\n\n{}\n", name, crate::builtins::object_text(o, fmt)),
+        Value::Inst(o) => format!("{} = \n\n{}\n", name, instance_body(o, fmt)),
     }
 }

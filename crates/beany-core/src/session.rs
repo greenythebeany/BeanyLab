@@ -163,6 +163,7 @@ impl Session {
                 Value::Struct(s) => format!("1×1 struct ({} fields)", s.keys.len()),
                 Value::Func(f) => f.text(),
                 Value::Obj(o) => o.class.to_string(),
+                Value::Inst(o) => o.class.name.to_string(),
             }
         };
         let mut cells = Vec::new();
@@ -177,6 +178,23 @@ impl Session {
                 cells: vec![vec![text]],
                 truncated: false,
             });
+        }
+        if let Value::Inst(o) = v {
+            // Objects list their properties like a scalar struct.
+            let s = o.props();
+            if s.arr.numel() == 1 {
+                for (i, k) in s.keys.iter().enumerate() {
+                    cells.push(vec![k.clone(), display::summary(&s.arr.data[0][i], fmt)]);
+                }
+                return Some(VarDetail {
+                    name: name.into(),
+                    class: o.class.name.into(),
+                    rows: s.keys.len(),
+                    cols: 2,
+                    cells,
+                    truncated: false,
+                });
+            }
         }
         if let Value::Struct(s) = v {
             if s.arr.numel() == 1 {

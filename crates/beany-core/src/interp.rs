@@ -88,6 +88,10 @@ pub struct Interp {
     pub arg_names: Vec<Option<String>>,
     /// Block-diagram models loaded or built by scripts (new_system/load_system), by name.
     pub open_models: HashMap<String, (crate::sim::Model, Option<PathBuf>)>,
+    /// Loaded user classes by name.
+    pub classes: HashMap<String, Arc<crate::classes::ClassInfo>>,
+    /// Function names found in `private/` folders, by folder.
+    private_fns: HashMap<PathBuf, HashSet<String>>,
 }
 
 impl Default for Interp {
@@ -128,6 +132,8 @@ impl Interp {
             last_builtin: String::new(),
             arg_names: Vec::new(),
             open_models: HashMap::new(),
+            classes: HashMap::new(),
+            private_fns: HashMap::new(),
         };
         crate::builtins::register(&mut it);
         crate::builtins::addons::init(&mut it);
@@ -320,6 +326,8 @@ impl Interp {
 
     pub fn clear_cache(&mut self) {
         self.cache.clear();
+        self.classes.clear();
+        self.private_fns.clear();
     }
 
     /// Locate `name.m` in the current folder, then the path.
@@ -370,6 +378,19 @@ impl Interp {
     }
 
     fn show(&mut self, name: &str, v: &Value) {
+        if let Value::Inst(o) = v {
+            if let Some(m) = o.class.methods.get("display").cloned() {
+                if self.call_method(&m, vec![v.clone()], 0).is_ok() {
+                    return;
+                }
+            } else if let Some(m) = o.class.methods.get("disp").cloned() {
+                self.print(&format!("{} = \n\n", name));
+                if self.call_method(&m, vec![v.clone()], 0).is_ok() {
+                    self.print("\n");
+                    return;
+                }
+            }
+        }
         let s = display::display(name, v, self.format);
         self.print(&s);
     }
@@ -625,6 +646,19 @@ impl Interp {
                     Access::DynField(e) => self.eval(e)?.text()?,
                     _ => unreachable!(),
                 };
+                if let Some(Value::Inst(o)) = cur {
+                    let new = if path.len() == 1 {
+                        rhs
+                    } else {
+                        let child = self
+                            .get_prop(&o, &field)?
+                            .into_iter()
+                            .next()
+                            .unwrap_or_else(Value::empty);
+                        self.assign_path(Some(child), &path[1..], rhs)?
+                    };
+                    return self.set_prop(o, &field, new);
+                }
                 if let Some(Value::Obj(mut o)) = cur {
                     let new = if path.len() == 1 {
                         rhs
@@ -813,6 +847,19 @@ impl Interp {
             Expr::Paren(inner) => vec![self.eval(inner)?],
             Expr::Unary(op, a) => {
                 let v = self.eval(a)?;
+                if let Value::Inst(_) = v {
+                    let (m, sym) = match op {
+                        UnOp::Neg => ("uminus", "-"),
+                        UnOp::Plus => ("uplus", "+"),
+                        UnOp::Not => ("not", "~"),
+                    };
+                    if *op == UnOp::Plus
+                        && self.dispatch_method(m, std::slice::from_ref(&v)).is_none()
+                    {
+                        return Ok(vec![v]);
+                    }
+                    return Ok(vec![self.object_operator(m, sym, vec![v])?]);
+                }
                 vec![ops::unary(*op, &v)?]
             }
             Expr::Binary(BinOp::AndAnd, a, b) => {
@@ -835,9 +882,27 @@ impl Interp {
             Expr::Binary(op, a, b) => {
                 let l = self.eval(a)?;
                 let r = self.eval(b)?;
+                if matches!(l, Value::Inst(_)) || matches!(r, Value::Inst(_)) {
+                    let m = crate::classes::binop_method(*op);
+                    return Ok(vec![self.object_operator(m, m, vec![l, r])?]);
+                }
                 vec![ops::binary(*op, &l, &r)?]
             }
-            Expr::Transpose(a) => vec![self.eval(a)?.transpose()?],
+            Expr::Transpose(a) => {
+                let v = self.eval(a)?;
+                if let Value::Inst(_) = v {
+                    for m in ["ctranspose", "transpose"] {
+                        if self.dispatch_method(m, std::slice::from_ref(&v)).is_some() {
+                            return Ok(vec![self.object_operator(m, "'", vec![v])?]);
+                        }
+                    }
+                }
+                vec![v.transpose()?]
+            }
+            Expr::SuperCall(name, sup, args) => {
+                let argv = self.eval_args(args)?;
+                self.super_call(name, sup, argv, nargout)?
+            }
             Expr::Range(a, step, b) => {
                 let start = self.eval(a)?.scalar()?;
                 let st = match step {
@@ -854,10 +919,16 @@ impl Interp {
                     for item in row {
                         items.extend(self.eval_multi(item, 1)?);
                     }
-                    row_vals.push(ops::horzcat(items)?);
+                    if items.iter().any(|v| matches!(v, Value::Inst(_))) {
+                        row_vals.push(self.concat_objects(items, true)?);
+                    } else {
+                        row_vals.push(ops::horzcat(items)?);
+                    }
                 }
                 if row_vals.is_empty() {
                     vec![Value::empty()]
+                } else if row_vals.iter().any(|v| matches!(v, Value::Inst(_))) {
+                    vec![self.concat_objects(row_vals, false)?]
                 } else {
                     vec![ops::vertcat(row_vals)?]
                 }
@@ -910,6 +981,11 @@ impl Interp {
                     let argv = self.eval_args(args)?;
                     return self.call_named(&name, argv, nargout);
                 }
+                if let Expr::Field(ob, member) = base.as_ref() {
+                    if let Some(r) = self.member_call(ob, member, Some(args), nargout)? {
+                        return Ok(r);
+                    }
+                }
                 if let Expr::Ident(name) = base.as_ref() {
                     if !self.is_var(name) {
                         let argv = self.eval_args(args)?;
@@ -950,6 +1026,9 @@ impl Interp {
             Expr::Field(base, name) => {
                 if let Some(f) = self.dotted_function(e) {
                     return self.call_named(&f, vec![], nargout);
+                }
+                if let Some(r) = self.member_call(base, name, None, nargout)? {
+                    return Ok(r);
                 }
                 let v = self.eval(base)?;
                 field_values(&v, name)?
@@ -1012,6 +1091,101 @@ impl Interp {
 
     // ---------- calls ----------
 
+    /// `obj.member(args)` / `Class.member(args)` when the member is a method, a
+    /// constant or an object property. `None` leaves the expression to plain field access.
+    fn member_call(
+        &mut self,
+        ob: &Expr,
+        member: &str,
+        args: Option<&[Expr]>,
+        nargout: usize,
+    ) -> MResult<Option<Vec<Value>>> {
+        if let Expr::Ident(cn) = ob {
+            if !self.is_var(cn)
+                && self
+                    .frame()
+                    .unit
+                    .as_ref()
+                    .is_none_or(|u| u.find(cn).is_none())
+            {
+                match self.class_member(cn, member)? {
+                    Some(crate::classes::ClassMember::Method(m)) => {
+                        let argv = match args {
+                            Some(a) => self.eval_args(a)?,
+                            None => Vec::new(),
+                        };
+                        return self.call_method(&m, argv, nargout).map(Some);
+                    }
+                    Some(crate::classes::ClassMember::Value(v)) => {
+                        return match args {
+                            Some(a) => {
+                                let idx = self.eval_index_args(&v, a)?;
+                                Ok(Some(vec![v.index(&idx)?]))
+                            }
+                            None => Ok(Some(vec![v])),
+                        };
+                    }
+                    None => {}
+                }
+            }
+        }
+        // Only objects are handled here; evaluate the base once.
+        if !self.may_be_object(ob) {
+            return Ok(None);
+        }
+        let ov = self.eval(ob)?;
+        let Value::Inst(o) = &ov else {
+            let vals = field_values(&ov, member)?;
+            return match args {
+                None => Ok(Some(vals)),
+                Some(a) => {
+                    let v = vals
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| merr!("Field is empty."))?;
+                    if let Value::Func(fh) = &v {
+                        let argv = self.eval_args(a)?;
+                        return self.call_handle(fh, argv, nargout).map(Some);
+                    }
+                    let idx = self.eval_index_args(&v, a)?;
+                    Ok(Some(vec![v.index(&idx)?]))
+                }
+            };
+        };
+        if !o.class.has_prop(member) {
+            if let Some(m) = o.class.methods.get(member).cloned() {
+                let mut argv = vec![ov.clone()];
+                if let Some(a) = args {
+                    argv.extend(self.eval_args(a)?);
+                }
+                return self.call_method(&m, argv, nargout).map(Some);
+            }
+        }
+        let vals = self.get_prop(o, member)?;
+        match args {
+            None => Ok(Some(vals)),
+            Some(a) => {
+                let v = vals.into_iter().next().unwrap_or_else(Value::empty);
+                if let Value::Func(fh) = &v {
+                    let argv = self.eval_args(a)?;
+                    return self.call_handle(fh, argv, nargout).map(Some);
+                }
+                let idx = self.eval_index_args(&v, a)?;
+                Ok(Some(vec![v.index(&idx)?]))
+            }
+        }
+    }
+
+    /// The expression can evaluate to an object: a variable holding one, or anything
+    /// that is not a plain variable (calls, nested access).
+    fn may_be_object(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Ident(n) => matches!(self.get_var(n), Some(Value::Inst(_))),
+            Expr::Field(b, _) | Expr::Index(b, _) => self.may_be_object(b),
+            _ => false,
+        }
+    }
+
     /// `a.b.c` names a package function (or a dotted built-in) when `a` is not a variable.
     fn dotted_function(&self, e: &Expr) -> Option<String> {
         fn join(e: &Expr) -> Option<(String, String)> {
@@ -1042,6 +1216,18 @@ impl Interp {
             if let Some(f) = unit.find(name) {
                 return self.call_user(&unit, &f, args, nargout);
             }
+            if let Some(p) = self.private_function(&unit.path, name) {
+                return self.call_file(&p, args, nargout);
+            }
+        }
+        if let Some(m) = self.dispatch_method(name, &args) {
+            return self.call_method(&m, args, nargout);
+        }
+        if let Some(e) = self.broken_method(name, &args) {
+            return Err(e);
+        }
+        if let Some(c) = self.classes.get(name).cloned() {
+            return self.construct(&c, args, nargout);
         }
         if let Some(p) = self.find_file(name, false) {
             return self.call_file(&p, args, nargout);
@@ -1062,14 +1248,45 @@ impl Interp {
         if let Some(p) = self.find_file(name, true) {
             return self.call_file(&p, args, nargout);
         }
+        if let Some(c) = self.find_class(name)? {
+            return self.construct(&c, args, nargout);
+        }
         Err(MError::with_id(
             "Beany:undefinedFunction",
             format!("Unrecognized function or variable '{}'.", name),
         ))
     }
 
+    /// `name.m` in the `private/` folder next to the calling file.
+    fn private_function(&mut self, caller: &str, name: &str) -> Option<PathBuf> {
+        if caller.is_empty() {
+            return None;
+        }
+        let dir = Path::new(caller).parent()?.join("private");
+        let names = self.private_fns.entry(dir.clone()).or_insert_with(|| {
+            std::fs::read_dir(&dir)
+                .map(|rd| {
+                    rd.flatten()
+                        .filter_map(|e| {
+                            let p = e.path();
+                            (p.extension()? == "m")
+                                .then(|| p.file_stem().map(|s| s.to_string_lossy().to_string()))?
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        names
+            .contains(name)
+            .then(|| dir.join(format!("{}.m", name)))
+    }
+
     fn call_file(&mut self, p: &Path, args: Vec<Value>, nargout: usize) -> MResult<Vec<Value>> {
         let unit = self.load_unit(p)?;
+        if unit.class.is_some() {
+            let c = self.class_of_unit(&unit)?.unwrap();
+            return self.construct(&c, args, nargout);
+        }
         if unit.script.is_some() {
             if !args.is_empty() {
                 return Err(merr!(
@@ -1090,6 +1307,19 @@ impl Interp {
         f: &Arc<Function>,
         args: Vec<Value>,
         nargout: usize,
+    ) -> MResult<Vec<Value>> {
+        self.call_user_preset(unit, f, args, nargout, Vec::new())
+    }
+
+    /// Call a user function with some variables set before it runs (a constructor's
+    /// output starts as the default object).
+    pub fn call_user_preset(
+        &mut self,
+        unit: &Arc<FileUnit>,
+        f: &Arc<Function>,
+        args: Vec<Value>,
+        nargout: usize,
+        preset: Vec<(String, Value)>,
     ) -> MResult<Vec<Value>> {
         let has_varargin = f.params.last().is_some_and(|p| p == "varargin");
         let fixed = if has_varargin {
@@ -1117,6 +1347,25 @@ impl Interp {
             line: f.line,
             ..Default::default()
         };
+        // A nested function called from its parent shares the parent's variables.
+        let shares = f.parent.as_deref().is_some_and(|p| {
+            self.frame().name == p
+                && self
+                    .frame()
+                    .unit
+                    .as_ref()
+                    .is_some_and(|u| Arc::ptr_eq(u, unit))
+        });
+        if shares {
+            for (k, v) in &self.frame().vars {
+                if !f.params.contains(k) && !f.outputs.contains(k) {
+                    frame.vars.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        for (k, v) in preset {
+            frame.vars.insert(k, v);
+        }
         let mut it = args.into_iter();
         for p in f.params.iter().take(fixed) {
             match it.next() {
@@ -1137,6 +1386,14 @@ impl Interp {
         let r = self.exec_block(&f.body);
         self.depth -= 1;
         let frame = self.frames.pop().unwrap();
+        if shares {
+            let parent = self.frame_mut();
+            for (k, v) in &frame.vars {
+                if !f.params.contains(k) && !f.outputs.contains(k) && parent.vars.contains_key(k) {
+                    parent.vars.insert(k.clone(), v.clone());
+                }
+            }
+        }
         if let Err(mut e) = r {
             if !e.interrupt {
                 e.stack.push(format!("{} (line {})", f.name, frame.line));
@@ -1390,7 +1647,7 @@ fn empty_like(rhs: &Value) -> Value {
             keys: s.keys.clone(),
             arr: Array::empty(),
         }),
-        Value::Func(_) | Value::Obj(_) => Value::empty(),
+        Value::Func(_) | Value::Obj(_) | Value::Inst(_) => Value::empty(),
     }
 }
 
@@ -1411,6 +1668,11 @@ fn paren_assign(base: Value, idx: &[Idx], rhs: Value) -> MResult<Value> {
                     "Deleting elements of a {} is not supported yet.",
                     o.class
                 ))
+            }
+            Value::Inst(o) => {
+                let mut s = o.props();
+                s.arr.delete(idx)?;
+                return Ok(Value::Inst(Box::new(o.with_props(s))));
             }
         }
         return Ok(base);
@@ -1520,6 +1782,31 @@ fn paren_assign(base: Value, idx: &[Idx], rhs: Value) -> MResult<Value> {
             Value::Struct(s)
         }
         (Value::Num(..), f @ Value::Func(_)) if base_empty => f,
+        (Value::Inst(a), Value::Inst(b)) if Arc::ptr_eq(&a.class, &b.class) && !a.is_handle() => {
+            let mut s = a.props();
+            let r = b.props();
+            let src = r.arr.map(|e| {
+                s.keys
+                    .iter()
+                    .map(|k| {
+                        r.key_index(k)
+                            .map(|i| e[i].clone())
+                            .unwrap_or_else(Value::empty)
+                    })
+                    .collect::<Vec<Value>>()
+            });
+            let fill = s.empty_elem();
+            s.arr.assign(idx, &src, &fill)?;
+            Value::Inst(Box::new(a.with_props(s)))
+        }
+        (Value::Num(..), Value::Inst(b)) if base_empty && !b.is_handle() => {
+            let mut s = b.props();
+            let src = s.arr.clone();
+            let fill = s.empty_elem();
+            s.arr = Array::empty();
+            s.arr.assign(idx, &src, &fill)?;
+            Value::Inst(Box::new(b.with_props(s)))
+        }
         (b, r) => {
             return Err(merr!(
                 "Conversion to {} from {} is not possible.",

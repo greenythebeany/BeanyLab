@@ -18,6 +18,63 @@ pub fn register(it: &mut Interp) {
         it.print(&s);
         none()
     });
+    b.insert("isobject", |_, a, _| {
+        check_args(&a, 1, 1)?;
+        one(bool_val(matches!(a[0], Value::Inst(_))))
+    });
+    b.insert("properties", |it, a, nargout| {
+        check_args(&a, 1, 1)?;
+        let names = class_names_of(it, &a[0], false)?;
+        if nargout > 0 {
+            return one(Value::Cell(Array::new(
+                names.len(),
+                1,
+                names.iter().map(|n| Value::chars(n)).collect(),
+            )));
+        }
+        let cls = class_label(&a[0])?;
+        let mut s = format!("\nProperties for class {}:\n\n", cls);
+        for n in names {
+            s.push_str(&format!("    {}\n", n));
+        }
+        s.push('\n');
+        it.print(&s);
+        none()
+    });
+    b.insert("methods", |it, a, nargout| {
+        check_args(&a, 1, 2)?;
+        let names = class_names_of(it, &a[0], true)?;
+        if nargout > 0 {
+            return one(Value::Cell(Array::new(
+                names.len(),
+                1,
+                names.iter().map(|n| Value::chars(n)).collect(),
+            )));
+        }
+        let cls = class_label(&a[0])?;
+        let mut s = format!("\nMethods for class {}:\n\n", cls);
+        for n in names {
+            s.push_str(&format!("    {}\n", n));
+        }
+        s.push('\n');
+        it.print(&s);
+        none()
+    });
+    b.insert("ismethod", |it, a, _| {
+        check_args(&a, 2, 2)?;
+        let m = a[1].text()?;
+        let names = class_names_of(it, &a[0], true)?;
+        one(bool_val(names.contains(&m)))
+    });
+    b.insert("isprop", |it, a, _| {
+        check_args(&a, 2, 2)?;
+        let p = a[1].text()?;
+        if let Value::Obj(o) = &a[0] {
+            return one(bool_val(o.get(&p).is_some()));
+        }
+        let names = class_names_of(it, &a[0], false).unwrap_or_default();
+        one(bool_val(names.contains(&p)))
+    });
     b.insert("display", |it, a, _| {
         check_args(&a, 1, 1)?;
         let s = display::display("ans", &a[0], it.format);
@@ -890,6 +947,43 @@ fn who(it: &mut Interp, _: Vec<Value>, nargout: usize) -> R {
     none()
 }
 
+fn class_label(v: &Value) -> MResult<String> {
+    if v.is_text() {
+        v.text()
+    } else {
+        Ok(v.class_name().to_string())
+    }
+}
+
+/// Sorted property (or method) names of an object or of a class given by name.
+fn class_names_of(it: &mut Interp, v: &Value, methods: bool) -> MResult<Vec<String>> {
+    let class = match v {
+        Value::Inst(o) => o.class.clone(),
+        v if v.is_text() => {
+            let n = v.text()?;
+            it.find_class(&n)?.ok_or_else(|| merr!("No class {}.", n))?
+        }
+        _ => return Ok(Vec::new()),
+    };
+    let mut names: Vec<String> = if methods {
+        let mut m: Vec<String> = class
+            .methods
+            .keys()
+            .filter(|k| !k.contains('.'))
+            .cloned()
+            .collect();
+        m.push(class.name.to_string());
+        m
+    } else {
+        class.props.iter().map(|p| p.name.clone()).collect()
+    };
+    if methods {
+        names.sort_by_key(|n| n.to_lowercase());
+    }
+    names.dedup();
+    Ok(names)
+}
+
 pub fn bytes_of(v: &Value) -> usize {
     match v {
         Value::Num(a, c) => {
@@ -920,6 +1014,7 @@ pub fn bytes_of(v: &Value) -> usize {
         }
         Value::Func(_) => 32,
         Value::Obj(o) => o.props.arr.data[0].iter().map(bytes_of).sum::<usize>() + 64,
+        Value::Inst(o) => bytes_of(&Value::Struct(o.props())),
     }
 }
 

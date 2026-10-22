@@ -26,6 +26,12 @@ pub enum Kw {
     Continue,
     Global,
     Persistent,
+    // Only inside class definition files.
+    Classdef,
+    Properties,
+    Methods,
+    Events,
+    Enumeration,
 }
 
 fn keyword(s: &str) -> Option<Kw> {
@@ -84,8 +90,8 @@ const OPS3: [&str; 1] = ["..."];
 const OPS2: [&str; 12] = [
     ".*", "./", ".\\", ".^", ".'", "==", "~=", "!=", "<=", ">=", "&&", "||",
 ];
-const OPS1: [&str; 18] = [
-    "+", "-", "*", "/", "\\", "^", "<", ">", "&", "|", "~", "=", ":", "(", ")", ".", "@", "!",
+const OPS1: [&str; 19] = [
+    "+", "-", "*", "/", "\\", "^", "<", ">", "&", "|", "~", "=", ":", "(", ")", ".", "@", "!", "?",
 ];
 
 /// Valid variable name: letter first, then letters, digits or underscores, not a keyword.
@@ -104,6 +110,8 @@ pub fn tokenize(src: &[char]) -> Result<Vec<Token>, MError> {
         toks: Vec::new(),
         brackets: Vec::new(),
         stmt_start: true,
+        class_file: starts_with_word(src, "classdef"),
+        blocks: Vec::new(),
     }
     .run()
 }
@@ -115,6 +123,34 @@ struct Lexer<'a> {
     toks: Vec<Token>,
     brackets: Vec<char>,
     stmt_start: bool,
+    /// The file is a class definition: `properties`, `methods`, `events` and
+    /// `enumeration` are keywords at the class level.
+    class_file: bool,
+    /// Open blocks (class files only), to know where section keywords are valid.
+    blocks: Vec<Kw>,
+}
+
+/// First word of the source, after comments and blank lines.
+fn starts_with_word(s: &[char], word: &str) -> bool {
+    let mut i = 0;
+    loop {
+        while i < s.len() && s[i].is_whitespace() {
+            i += 1;
+        }
+        if i < s.len() && s[i] == '%' {
+            while i < s.len() && s[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        break;
+    }
+    let w: Vec<char> = word.chars().collect();
+    s.len() >= i + w.len()
+        && s[i..i + w.len()] == w[..]
+        && !s
+            .get(i + w.len())
+            .is_some_and(|c| c.is_alphanumeric() || *c == '_')
 }
 
 impl<'a> Lexer<'a> {
@@ -274,10 +310,15 @@ impl<'a> Lexer<'a> {
                     j += 1;
                 }
                 let word: String = self.s[self.i..j].iter().collect();
-                if let Some(kw) = keyword(&word) {
+                if let Some(kw) = keyword(&word).or_else(|| self.class_keyword(&word)) {
                     self.i = j;
+                    self.track_block(kw);
                     self.push(Tok::Kw(kw), start, space);
-                } else if self.stmt_start && self.brackets.is_empty() && self.is_command_syntax(j) {
+                } else if self.stmt_start
+                    && self.brackets.is_empty()
+                    && !self.in_declarations()
+                    && self.is_command_syntax(j)
+                {
                     self.i = j;
                     let (args, raw_end) = self.command_args()?;
                     let raw: String = self.s[start..raw_end].iter().collect();
@@ -441,6 +482,52 @@ impl<'a> Lexer<'a> {
     }
 
     /// Decide whether `word` at statement start (ending at `j`) begins command syntax.
+    fn class_keyword(&self, word: &str) -> Option<Kw> {
+        if !self.class_file || !self.stmt_start || !self.brackets.is_empty() {
+            return None;
+        }
+        match (word, self.blocks.len()) {
+            ("classdef", 0) => Some(Kw::Classdef),
+            ("properties", 1) => Some(Kw::Properties),
+            ("methods", 1) => Some(Kw::Methods),
+            ("events", 1) => Some(Kw::Events),
+            ("enumeration", 1) => Some(Kw::Enumeration),
+            _ => None,
+        }
+    }
+
+    fn track_block(&mut self, kw: Kw) {
+        if !self.class_file || !self.brackets.is_empty() {
+            return;
+        }
+        match kw {
+            Kw::End => {
+                self.blocks.pop();
+            }
+            Kw::If
+            | Kw::For
+            | Kw::Parfor
+            | Kw::While
+            | Kw::Switch
+            | Kw::Try
+            | Kw::Function
+            | Kw::Classdef
+            | Kw::Properties
+            | Kw::Methods
+            | Kw::Events
+            | Kw::Enumeration => self.blocks.push(kw),
+            _ => {}
+        }
+    }
+
+    /// Inside a properties, events or enumeration block, where lines are declarations.
+    fn in_declarations(&self) -> bool {
+        matches!(
+            self.blocks.last(),
+            Some(Kw::Properties | Kw::Events | Kw::Enumeration)
+        )
+    }
+
     fn is_command_syntax(&self, j: usize) -> bool {
         let mut k = j;
         let mut gap = false;

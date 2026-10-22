@@ -11,7 +11,16 @@ pub fn register(it: &mut Interp) {
     });
     b.insert("struct", struct_fn);
     b.insert("fieldnames", |_, a, _| {
-        check_args(&a, 1, 1)?;
+        check_args(&a, 1, 2)?;
+        if let Value::Inst(o) = &a[0] {
+            let names: Vec<Value> = o
+                .class
+                .props
+                .iter()
+                .map(|p| Value::chars(&p.name))
+                .collect();
+            return one(Value::Cell(Array::new(names.len(), 1, names)));
+        }
         let Value::Struct(s) = &a[0] else {
             return Err(merr!(
                 "Invalid input argument of type '{}'. Input must be a structure or an object.",
@@ -223,6 +232,11 @@ pub fn register(it: &mut Interp) {
 fn struct_fn(_: &mut Interp, a: Vec<Value>, _: usize) -> R {
     if a.is_empty() {
         return one(Value::Struct(StructArr::scalar(vec![])));
+    }
+    match &a[0] {
+        Value::Inst(o) if a.len() == 1 => return one(Value::Struct(o.props())),
+        Value::Struct(_) if a.len() == 1 => return one(a[0].clone()),
+        _ => {}
     }
     if !a.len().is_multiple_of(2) {
         return Err(merr!("Field and value input arguments must come in pairs."));

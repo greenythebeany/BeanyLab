@@ -798,7 +798,7 @@ fn isa(_: &mut Interp, a: Vec<Value>, _: usize) -> R {
         "numeric" => matches!(&a[0], Value::Num(_, c) if *c != NumClass::Logical),
         "float" => matches!(&a[0], Value::Num(_, NumClass::Double | NumClass::Single)),
         "integer" => matches!(&a[0], Value::Num(_, NumClass::Int(_))),
-        c => c == name,
+        c => c == name || matches!(&a[0], Value::Inst(o) if o.class.isa(c)),
     };
     one(bool_val(r))
 }

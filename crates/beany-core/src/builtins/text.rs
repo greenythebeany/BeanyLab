@@ -349,6 +349,12 @@ fn flatten_args(args: &[Value]) -> MResult<Vec<PArg>> {
             Value::Obj(o) => {
                 return Err(merr!("Function is not defined for '{}' inputs.", o.class))
             }
+            Value::Inst(o) => {
+                return Err(merr!(
+                    "Function is not defined for '{}' inputs.",
+                    o.class.name
+                ))
+            }
         }
     }
     Ok(out)

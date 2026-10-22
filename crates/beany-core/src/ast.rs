@@ -58,6 +58,8 @@ pub enum Expr {
         text: String,
     },
     FuncHandle(String),
+    /// `name@Superclass(args)`: superclass constructor or method call.
+    SuperCall(String, String, Vec<Expr>),
     /// Parenthesised expression: stops cs-list expansion and forces a single value.
     Paren(Box<Expr>),
 }
@@ -141,6 +143,8 @@ pub struct Function {
     pub body: Vec<Stmt>,
     pub line: usize,
     pub help: String,
+    /// For a nested function, the function it is defined in (they share variables).
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,8 +152,44 @@ pub struct FileUnit {
     pub path: String,
     /// Script statements (empty for function files).
     pub script: Option<Vec<Stmt>>,
-    /// For function files, `functions[0]` is the main function.
+    /// For function files, `functions[0]` is the main function. In class files these
+    /// are the local functions after the class definition.
     pub functions: Vec<Arc<Function>>,
+    /// The class defined by a `classdef` file.
+    pub class: Option<Arc<ClassDef>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassDef {
+    pub name: String,
+    pub supers: Vec<String>,
+    /// Class attributes such as `Abstract` or `Sealed`, with their raw values.
+    pub attrs: Vec<(String, String)>,
+    pub props: Vec<PropDef>,
+    pub methods: Vec<MethodDef>,
+    pub events: Vec<String>,
+    pub enums: Vec<(String, Vec<Expr>)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PropDef {
+    pub name: String,
+    pub default: Option<Expr>,
+    pub constant: bool,
+    pub dependent: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct MethodDef {
+    pub func: Arc<Function>,
+    pub is_static: bool,
+}
+
+/// True when an attribute list sets `name` (alone, `= true` or `= 1`).
+pub fn attr_on(attrs: &[(String, String)], name: &str) -> bool {
+    attrs
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case(name) && (v.is_empty() || v == "true" || v == "1"))
 }
 
 impl FileUnit {

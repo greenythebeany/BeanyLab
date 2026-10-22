@@ -740,3 +740,169 @@ fn addon_package_installs_and_package_functions_resolve() {
     assert_eq!(beany_core::builtins::addons::list(&root).len(), 1);
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ---------------- classes ----------------
+
+fn class_dir(files: &[(&str, &str)]) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "beany-cls-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::SeqCst)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    for (name, body) in files {
+        let p = dir.join(name);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    }
+    dir
+}
+
+fn run_in(dir: &std::path::Path, code: &str) -> Interp {
+    let mut it = Interp::new();
+    it.cwd = dir.to_path_buf();
+    if let Err(e) = it.eval_string(code) {
+        panic!("code failed: {}\n---\n{}", e.report(), code);
+    }
+    it
+}
+
+const POLY: &str = r#"classdef Poly
+    % A polynomial with operator overloading.
+    properties
+        c = 0   % coefficients
+        name char = 'p'
+    end
+    properties (Constant)
+        Version = 2
+    end
+    properties (Dependent)
+        Degree
+    end
+    methods
+        function p = Poly(c)
+            if nargin > 0 && isa(c, 'Poly')
+                p = c;
+            elseif nargin > 0
+                p.c = c;
+            end
+        end
+        function d = get.Degree(p)
+            d = numel(p.c) - 1;
+        end
+        function r = plus(a, b)
+            a = Poly(a); b = Poly(b);
+            n = max(numel(a.c), numel(b.c));
+            r = Poly([zeros(1, n - numel(a.c)) a.c] + [zeros(1, n - numel(b.c)) b.c]);
+        end
+        function r = uminus(a)
+            r = Poly(-a.c);
+        end
+        function y = at(p, x)
+            y = polyval(p.c, x);
+        end
+        function disp(p)
+            fprintf('poly %s\n', mat2str(p.c));
+        end
+    end
+    methods (Static)
+        function p = one()
+            p = Poly(1);
+        end
+    end
+end
+"#;
+
+#[test]
+fn value_class_properties_methods_and_operators() {
+    let dir = class_dir(&[("Poly.m", POLY)]);
+    let it = run_in(
+        &dir,
+        "p = Poly([1 2]); q = p + 3; r = -q; a = q.c; d = q.Degree; v = Poly.Version; \
+         y = p.at(2); y2 = at(p, 3); o = Poly.one(); oc = o.c; cl = class(p); \
+         ia = isa(p, 'Poly'); io = isobject(p); e = Poly(); ec = e.c; p2 = p; p2.c = 5; pc = p.c; \
+         f = fieldnames(p); s = struct(p);",
+    );
+    assert_eq!(num(&it, "a"), vec![1.0, 5.0]);
+    assert_eq!(num(&it, "d"), vec![1.0]);
+    assert_eq!(num(&it, "v"), vec![2.0]);
+    assert_eq!(num(&it, "y"), vec![4.0]);
+    assert_eq!(num(&it, "y2"), vec![5.0]);
+    assert_eq!(num(&it, "oc"), vec![1.0]);
+    assert_eq!(num(&it, "ec"), vec![0.0]);
+    assert_eq!(
+        num(&it, "pc"),
+        vec![1.0, 2.0],
+        "value class copies are independent"
+    );
+    assert_eq!(it.get_var("cl").unwrap().text().unwrap(), "Poly");
+    assert_eq!(num(&it, "ia"), vec![1.0]);
+    assert_eq!(num(&it, "io"), vec![1.0]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn class_display_uses_disp_method() {
+    let dir = class_dir(&[("Poly.m", POLY)]);
+    let mut it = run_in(&dir, "p = Poly([1 2])");
+    let out = it.take_output();
+    assert!(out.contains("poly [1 2]"), "{}", out);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn handle_class_shares_state_and_inheritance_works() {
+    let dir = class_dir(&[
+        (
+            "Counter.m",
+            "classdef Counter < handle\n properties\n  n = 0\n end\n methods\n  function inc(obj, k)\n   obj.n = obj.n + k;\n  end\n end\nend\n",
+        ),
+        (
+            "Animal.m",
+            "classdef Animal\n properties\n  name\n end\n methods\n  function a = Animal(n)\n   a.name = n;\n  end\n  function s = speak(a)\n   s = [a.name ' makes a sound'];\n  end\n  function s = kind(a)\n   s = 'animal';\n  end\n end\nend\n",
+        ),
+        (
+            "Dog.m",
+            "classdef Dog < Animal\n properties\n  tricks = 1\n end\n methods\n  function d = Dog(n)\n   d = d@Animal(n);\n  end\n  function s = speak(d)\n   s = [speak@Animal(d) ' (woof)'];\n  end\n end\nend\n",
+        ),
+    ]);
+    let it = run_in(
+        &dir,
+        "c = Counter(); c2 = c; c.inc(2); inc(c2, 3); n = c.n; \
+         d = Dog('Rex'); s = d.speak(); k = d.kind(); t = d.tricks; ia = isa(d, 'Animal'); ih = isa(c, 'handle');",
+    );
+    assert_eq!(num(&it, "n"), vec![5.0]);
+    assert_eq!(
+        it.get_var("s").unwrap().text().unwrap(),
+        "Rex makes a sound (woof)"
+    );
+    assert_eq!(it.get_var("k").unwrap().text().unwrap(), "animal");
+    assert_eq!(num(&it, "t"), vec![1.0]);
+    assert_eq!(num(&it, "ia"), vec![1.0]);
+    assert_eq!(num(&it, "ih"), vec![1.0]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn folder_class_methods_and_private_functions() {
+    let dir = class_dir(&[
+        (
+            "@Vec2/Vec2.m",
+            "classdef Vec2\n properties\n  x = 0\n  y = 0\n end\n methods\n  function v = Vec2(x, y)\n   if nargin, v.x = x; v.y = y; end\n  end\n  r = norm2(v)\n end\nend\n",
+        ),
+        ("@Vec2/norm2.m", "function r = norm2(v)\nr = sq(v.x) + sq(v.y);\nend\n"),
+        ("@Vec2/mtimes.m", "function r = mtimes(a, b)\nif isa(a, 'Vec2'), r = Vec2(a.x*b, a.y*b); else, r = Vec2(b.x*a, b.y*a); end\nend\n"),
+        ("@Vec2/private/sq.m", "function y = sq(x)\ny = x^2;\nend\n"),
+        (
+            "nest.m",
+            "function r = nest(a)\n  total = 0;\n  add(a);\n  add(10);\n  r = total;\n  function add(k)\n    total = total + k;\n  end\nend\n",
+        ),
+    ]);
+    let it = run_in(&dir, "v = 2 * Vec2(3, 4); r = norm2(v); vs = [Vec2(1,1) Vec2(2,2)]; nv = numel(vs); t = nest(5);");
+    assert_eq!(num(&it, "r"), vec![100.0]);
+    assert_eq!(num(&it, "nv"), vec![2.0]);
+    assert_eq!(num(&it, "t"), vec![15.0]);
+    let _ = std::fs::remove_dir_all(dir);
+}

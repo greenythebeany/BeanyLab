@@ -10,6 +10,7 @@
 
 pub mod ast;
 pub mod builtins;
+pub mod classes;
 pub mod display;
 pub mod error;
 pub mod graphics;

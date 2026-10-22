@@ -558,6 +558,48 @@ pub enum Value {
     Struct(StructArr),
     Func(FuncHandle),
     Obj(Box<Object>),
+    /// Object of a user-defined class.
+    Inst(Box<Instance>),
+}
+
+/// An object (or object array) of a class defined in `.m` code.
+#[derive(Debug, Clone)]
+pub struct Instance {
+    pub class: Arc<crate::classes::ClassInfo>,
+    pub data: InstData,
+}
+
+#[derive(Debug, Clone)]
+pub enum InstData {
+    /// Value class: properties are copied with the object.
+    Value(StructArr),
+    /// Handle class: copies refer to the same properties.
+    Handle(Arc<std::sync::Mutex<StructArr>>),
+}
+
+impl Instance {
+    /// A copy of the property values.
+    pub fn props(&self) -> StructArr {
+        match &self.data {
+            InstData::Value(s) => s.clone(),
+            InstData::Handle(h) => h.lock().unwrap().clone(),
+        }
+    }
+    pub fn dims(&self) -> (usize, usize) {
+        match &self.data {
+            InstData::Value(s) => (s.arr.rows, s.arr.cols),
+            InstData::Handle(_) => (1, 1),
+        }
+    }
+    pub fn with_props(&self, s: StructArr) -> Instance {
+        Instance {
+            class: self.class.clone(),
+            data: InstData::Value(s),
+        }
+    }
+    pub fn is_handle(&self) -> bool {
+        matches!(self.data, InstData::Handle(_))
+    }
 }
 
 impl Default for Value {
@@ -612,6 +654,7 @@ impl Value {
             Value::Struct(s) => (s.arr.rows, s.arr.cols),
             Value::Func(_) => (1, 1),
             Value::Obj(o) => o.dims(),
+            Value::Inst(o) => o.dims(),
         }
     }
     pub fn numel(&self) -> usize {
@@ -630,6 +673,7 @@ impl Value {
             Value::Struct(_) => "struct",
             Value::Func(_) => "function_handle",
             Value::Obj(o) => o.class,
+            Value::Inst(o) => o.class.name,
         }
     }
     pub fn is_numeric_like(&self) -> bool {
@@ -714,6 +758,10 @@ impl Value {
                 "Conversion to logical from {} is not possible.",
                 o.class
             )),
+            Value::Inst(o) => Err(merr!(
+                "Conversion to logical from {} is not possible.",
+                o.class.name
+            )),
         }
     }
 
@@ -736,6 +784,20 @@ impl Value {
                     o.class
                 ))
             }
+            Value::Inst(o) => match &o.data {
+                InstData::Value(s) => {
+                    let mut s = s.clone();
+                    s.arr = s.arr.index(idx)?;
+                    Value::Inst(Box::new(o.with_props(s)))
+                }
+                InstData::Handle(_) => {
+                    let one = Array::scalar(0.0).index(idx)?;
+                    if one.numel() != 1 {
+                        return Err(merr!("Index exceeds the number of array elements (1)."));
+                    }
+                    self.clone()
+                }
+            },
         })
     }
 
@@ -751,6 +813,14 @@ impl Value {
             }),
             Value::Func(_) => return Err(merr!("Undefined operator ''' for function_handle")),
             Value::Obj(o) => return Err(merr!("Undefined operator ''' for {}", o.class)),
+            Value::Inst(o) => match &o.data {
+                InstData::Value(s) => {
+                    let mut s = s.clone();
+                    s.arr = s.arr.transpose();
+                    Value::Inst(Box::new(o.with_props(s)))
+                }
+                InstData::Handle(_) => self.clone(),
+            },
         })
     }
 
@@ -766,6 +836,15 @@ impl Value {
             }),
             Value::Func(_) => return Err(merr!("Cannot reshape a function handle")),
             Value::Obj(o) => return Err(merr!("Cannot reshape a {}", o.class)),
+            Value::Inst(o) => match &o.data {
+                InstData::Value(s) => {
+                    let mut s = s.clone();
+                    s.arr = s.arr.reshape(r, c)?;
+                    Value::Inst(Box::new(o.with_props(s)))
+                }
+                InstData::Handle(_) if r * c == 1 => self.clone(),
+                InstData::Handle(_) => return Err(merr!("Cannot reshape a {}", o.class.name)),
+            },
         })
     }
 
@@ -804,6 +883,19 @@ impl Value {
                 })
                 .collect(),
             Value::Func(_) | Value::Obj(_) => vec![self.clone()],
+            Value::Inst(o) => match &o.data {
+                InstData::Value(s) => s
+                    .arr
+                    .data
+                    .iter()
+                    .map(|e| {
+                        let mut one = s.clone();
+                        one.arr = Array::scalar(e.clone());
+                        Value::Inst(Box::new(o.with_props(one)))
+                    })
+                    .collect(),
+                InstData::Handle(_) => vec![self.clone()],
+            },
         }
     }
 
@@ -890,6 +982,13 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Str(x), Value::Char(_)) if x.numel() == 1 => b.text().is_ok_and(|t| t == x.data[0]),
         (Value::Char(_), Value::Str(y)) if y.numel() == 1 => a.text().is_ok_and(|t| t == y.data[0]),
         (Value::Func(x), Value::Func(y)) => x.text() == y.text(),
+        (Value::Inst(x), Value::Inst(y)) => {
+            Arc::ptr_eq(&x.class, &y.class)
+                && match (&x.data, &y.data) {
+                    (InstData::Handle(p), InstData::Handle(q)) => Arc::ptr_eq(p, q),
+                    _ => values_equal(&Value::Struct(x.props()), &Value::Struct(y.props())),
+                }
+        }
         _ => match (a.to_num(), b.to_num()) {
             (Ok(x), Ok(y)) if a.is_numeric_like() && b.is_numeric_like() => {
                 x.rows == y.rows && x.cols == y.cols && x.data == y.data

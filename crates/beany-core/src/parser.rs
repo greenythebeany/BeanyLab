@@ -20,17 +20,59 @@ pub struct Parser<'a> {
     src: &'a [char],
     ctx: Vec<Ctx>,
     index_depth: usize,
+    /// Functions end with `end`, so a `function` inside one is nested.
+    nested_ok: bool,
+    /// Nested functions found so far, added to the file's functions at the end.
+    nested: Vec<Function>,
+}
+
+/// Whether every block opener in the token stream has its own `end` (functions
+/// included), which is what allows nested functions.
+fn functions_have_end(toks: &[Token]) -> bool {
+    let mut brackets = 0i32;
+    let mut open = 0i32;
+    let mut functions = 0;
+    for t in toks {
+        match &t.tok {
+            Tok::Op("(" | "[" | "{") => brackets += 1,
+            Tok::Op(")" | "]" | "}") => brackets -= 1,
+            Tok::Kw(k) if brackets == 0 => match k {
+                Kw::End => open -= 1,
+                Kw::Function => {
+                    functions += 1;
+                    open += 1
+                }
+                Kw::If
+                | Kw::For
+                | Kw::Parfor
+                | Kw::While
+                | Kw::Switch
+                | Kw::Try
+                | Kw::Classdef
+                | Kw::Properties
+                | Kw::Methods
+                | Kw::Events
+                | Kw::Enumeration => open += 1,
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    functions > 0 && open == 0
 }
 
 pub fn parse_file(path: &str, source: &str) -> MResult<FileUnit> {
     let chars: Vec<char> = source.chars().collect();
     let toks = tokenize(&chars).map_err(|e| with_file(e, path))?;
+    let nested_ok = functions_have_end(&toks);
     let mut p = Parser {
         toks,
         pos: 0,
         src: &chars,
         ctx: Vec::new(),
         index_depth: 0,
+        nested_ok,
+        nested: Vec::new(),
     };
     p.file(path).map_err(|e| with_file(e, path))
 }
@@ -50,6 +92,8 @@ pub fn parse_expression(source: &str) -> MResult<Expr> {
         src: &chars,
         ctx: Vec::new(),
         index_depth: 0,
+        nested_ok: false,
+        nested: Vec::new(),
     };
     let e = p.expr()?;
     p.skip_newlines();
@@ -172,8 +216,11 @@ impl<'a> Parser<'a> {
             path: path.to_string(),
             script: None,
             functions: Vec::new(),
+            class: None,
         };
-        if !self.is_kw(Kw::Function) {
+        if self.is_kw(Kw::Classdef) {
+            unit.class = Some(Arc::new(self.classdef()?));
+        } else if !self.is_kw(Kw::Function) {
             let body = self.block(&[Kw::Function])?;
             unit.script = Some(body);
         }
@@ -191,6 +238,7 @@ impl<'a> Parser<'a> {
                 return Err(self.err("Statements are not allowed after function definitions"));
             }
         }
+        unit.functions.extend(self.nested.drain(..).map(Arc::new));
         Ok(unit)
     }
 
@@ -234,7 +282,13 @@ impl<'a> Parser<'a> {
             }
             self.bump();
         }
-        let body = self.block(&[Kw::End, Kw::Function])?;
+        let mut body = self.block(&[Kw::End, Kw::Function])?;
+        while self.nested_ok && self.is_kw(Kw::Function) {
+            let mut inner = self.function()?;
+            inner.parent = Some(name.clone());
+            self.nested.push(inner);
+            body.extend(self.block(&[Kw::End, Kw::Function])?);
+        }
         if self.is_kw(Kw::End) {
             self.bump();
         }
@@ -245,7 +299,217 @@ impl<'a> Parser<'a> {
             body,
             line,
             help: String::new(),
+            parent: None,
         })
+    }
+
+    // ---------- classes ----------
+
+    fn classdef(&mut self) -> MResult<ClassDef> {
+        self.bump(); // classdef
+        let attrs = self.attributes()?;
+        let name = match self.bump().tok {
+            Tok::Ident(s) | Tok::Command(s, _, _) => s,
+            _ => return Err(self.err("Expected class name")),
+        };
+        let mut supers = Vec::new();
+        if self.is_op("<") {
+            self.bump();
+            loop {
+                supers.push(self.func_name()?);
+                if self.is_op("&") {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        let mut class = ClassDef {
+            name,
+            supers,
+            attrs,
+            props: Vec::new(),
+            methods: Vec::new(),
+            events: Vec::new(),
+            enums: Vec::new(),
+        };
+        loop {
+            self.skip_newlines();
+            match self.tok() {
+                Tok::Kw(Kw::End) => {
+                    self.bump();
+                    return Ok(class);
+                }
+                Tok::Kw(Kw::Properties) => {
+                    self.bump();
+                    let attrs = self.attributes()?;
+                    let constant = attr_on(&attrs, "Constant");
+                    let dependent = attr_on(&attrs, "Dependent");
+                    loop {
+                        self.skip_newlines();
+                        if self.is_kw(Kw::End) {
+                            self.bump();
+                            break;
+                        }
+                        let name = match self.bump().tok {
+                            Tok::Ident(s) => s,
+                            _ => return Err(self.err("Expected property name")),
+                        };
+                        // Size, class and validation functions are accepted and ignored.
+                        if self.is_op("(") {
+                            self.skip_group()?;
+                        }
+                        if matches!(self.tok(), Tok::Ident(_)) {
+                            self.func_name()?;
+                        }
+                        if self.is_op("{") {
+                            self.skip_group()?;
+                        }
+                        let default = if self.is_op("=") {
+                            self.bump();
+                            Some(self.expr()?)
+                        } else {
+                            None
+                        };
+                        class.props.push(PropDef {
+                            name,
+                            default,
+                            constant,
+                            dependent,
+                        });
+                        self.terminator()?;
+                    }
+                }
+                Tok::Kw(Kw::Methods) => {
+                    self.bump();
+                    let attrs = self.attributes()?;
+                    let is_static = attr_on(&attrs, "Static");
+                    loop {
+                        self.skip_newlines();
+                        match self.tok() {
+                            Tok::Kw(Kw::End) => {
+                                self.bump();
+                                break;
+                            }
+                            Tok::Kw(Kw::Function) => {
+                                let f = self.function()?;
+                                class.methods.push(MethodDef {
+                                    func: Arc::new(f),
+                                    is_static,
+                                });
+                            }
+                            Tok::Eof => return Err(self.err("Missing 'end' for 'methods'")),
+                            // A signature for a method defined in its own file.
+                            _ => self.skip_line(),
+                        }
+                    }
+                }
+                Tok::Kw(Kw::Events) => {
+                    self.bump();
+                    self.attributes()?;
+                    loop {
+                        self.skip_newlines();
+                        match self.bump().tok {
+                            Tok::Kw(Kw::End) => break,
+                            Tok::Ident(s) => class.events.push(s),
+                            _ => return Err(self.err("Expected event name")),
+                        }
+                    }
+                }
+                Tok::Kw(Kw::Enumeration) => {
+                    self.bump();
+                    loop {
+                        self.skip_newlines();
+                        if self.is_kw(Kw::End) {
+                            self.bump();
+                            break;
+                        }
+                        let (name, args) = match self.expr()? {
+                            Expr::Ident(n) => (n, Vec::new()),
+                            Expr::Index(b, args) => match *b {
+                                Expr::Ident(n) => (n, args),
+                                _ => return Err(self.err("Invalid enumeration member")),
+                            },
+                            _ => return Err(self.err("Invalid enumeration member")),
+                        };
+                        class.enums.push((name, args));
+                    }
+                }
+                _ => return Err(self.err("Expected properties, methods, events or enumeration")),
+            }
+        }
+    }
+
+    /// Optional `(Name = value, Name, ~Name)` attribute list; values are kept as raw text.
+    fn attributes(&mut self) -> MResult<Vec<(String, String)>> {
+        let mut out = Vec::new();
+        if !self.is_op("(") {
+            return Ok(out);
+        }
+        self.bump();
+        loop {
+            match self.tok().clone() {
+                Tok::Op(")") => {
+                    self.bump();
+                    return Ok(out);
+                }
+                Tok::Comma | Tok::Newline => {
+                    self.bump();
+                }
+                Tok::Op("~") => {
+                    self.bump();
+                    if let Tok::Ident(n) = self.bump().tok {
+                        out.push((n, "false".into()));
+                    }
+                }
+                Tok::Ident(n) => {
+                    self.bump();
+                    let mut value = String::new();
+                    if self.is_op("=") {
+                        self.bump();
+                        let mut depth = 0usize;
+                        loop {
+                            match self.tok() {
+                                Tok::Op("(" | "[" | "{") => depth += 1,
+                                Tok::Op(")" | "]" | "}") if depth == 0 => break,
+                                Tok::Op(")" | "]" | "}") => depth -= 1,
+                                Tok::Comma if depth == 0 => break,
+                                Tok::Eof => return Err(self.err("Unterminated attribute list")),
+                                _ => {}
+                            }
+                            let t = self.bump();
+                            value.extend(&self.src[t.start..t.end]);
+                        }
+                    }
+                    out.push((n, value.trim().to_string()));
+                }
+                _ => return Err(self.err("Invalid attribute")),
+            }
+        }
+    }
+
+    /// Skip a bracketed group starting at the current `(`, `[` or `{`.
+    fn skip_group(&mut self) -> MResult<()> {
+        let mut depth = 0usize;
+        loop {
+            match self.bump().tok {
+                Tok::Op("(" | "[" | "{") => depth += 1,
+                Tok::Op(")" | "]" | "}") => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Ok(());
+                    }
+                }
+                Tok::Eof => return Err(self.err("Unbalanced brackets")),
+                _ => {}
+            }
+        }
+    }
+
+    fn skip_line(&mut self) {
+        while !matches!(self.tok(), Tok::Newline | Tok::Semi | Tok::Eof) {
+            self.bump();
+        }
     }
 
     fn func_name(&mut self) -> MResult<String> {
@@ -722,6 +986,21 @@ impl<'a> Parser<'a> {
             Tok::Num(n) => Ok(Expr::Num(n)),
             Tok::Char(s) => Ok(Expr::Char(s)),
             Tok::Str(s) => Ok(Expr::Str(s)),
+            Tok::Ident(s)
+                if self.is_op("@")
+                    && !self.cur().space_before
+                    && matches!(self.tok_at(1), Tok::Ident(_)) =>
+            {
+                self.bump(); // @
+                let class = self.func_name()?;
+                let args = if self.is_op("(") {
+                    self.bump();
+                    self.args(")")?
+                } else {
+                    Vec::new()
+                };
+                Ok(Expr::SuperCall(s, class, args))
+            }
             Tok::Ident(s) => Ok(Expr::Ident(s)),
             Tok::Command(name, _, _) => Err(MError::syntax(format!(
                 "Unexpected command syntax '{}' (line {})",
