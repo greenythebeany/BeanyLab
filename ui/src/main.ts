@@ -867,6 +867,12 @@ function runModel(t: Tab): Promise<void> {
 async function openPath(path: string) {
   const existing = tabs.find((t) => (t.kind === "code" || t.kind === "model") && t.path && samePath(t.path, path));
   if (existing) { activate(existing); return; }
+  if (/\.mltbx$/i.test(path)) {
+    const c = `matlab.addons.install('${path.replace(/'/g, "''")}')`;
+    addHistory(c);
+    execute(c, true);
+    return;
+  }
   if (MODEL_RE.test(path)) {
     if (isDesktop && !modelWindow) {
       openAppWindow(modelWindowLabel(path), `model=${encodeURIComponent(path)}`, `${baseName(path)} - BeanyLab Model`);
@@ -1002,7 +1008,7 @@ async function refreshFiles() {
   el.innerHTML = "";
   for (const f of entries) {
     const row = document.createElement("div");
-    row.className = "frow" + (/\.(m|bmdl|slx|mdl)$/i.test(f.name) ? " code" : "");
+    row.className = "frow" + (/\.(m|bmdl|slx|mdl|mltbx)$/i.test(f.name) ? " code" : "");
     row.innerHTML = `${fileIcon(f.name, f.is_dir)}<span class="name"></span>`;
     (row.querySelector(".name") as HTMLElement).textContent = f.name;
     row.title = f.path;

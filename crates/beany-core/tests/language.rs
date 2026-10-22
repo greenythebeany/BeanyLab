@@ -690,3 +690,53 @@ fn loop_performance_is_reasonable() {
     // Generous bound so debug builds pass; release is much faster.
     assert!(t.elapsed().as_secs_f64() < 20.0);
 }
+
+// ---------------- add-ons ----------------
+
+#[test]
+fn addon_package_installs_and_package_functions_resolve() {
+    use std::io::Write;
+    let tmp = std::env::temp_dir().join(format!("beany-addon-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let pkg = tmp.join("demo.mltbx");
+    let mut z = zip::ZipWriter::new(std::fs::File::create(&pkg).unwrap());
+    let opt = zip::write::SimpleFileOptions::default();
+    let mut put = |name: &str, body: &str| {
+        z.start_file(name, opt).unwrap();
+        z.write_all(body.as_bytes()).unwrap();
+    };
+    put(
+        "metadata/coreProperties.xml",
+        r#"<cp:coreProperties xmlns:cp="urn:cp" xmlns:dc="urn:dc"><dc:title>Demo Tools</dc:title><cp:version>2.1</cp:version></cp:coreProperties>"#,
+    );
+    put(
+        "metadata/configuration.xml",
+        r#"<configuration xmlns="urn:c"><matlabPaths><matlabPath></matlabPath><matlabPath>/lib</matlabPath></matlabPaths></configuration>"#,
+    );
+    put(
+        "fsroot/lib/demo_twice.m",
+        "function y = demo_twice(x)\ny = 2*x;\nend\n",
+    );
+    put("fsroot/+dt/half.m", "function y = half(x)\ny = x/2;\nend\n");
+    put("fsroot/../evil.m", "x = 1;");
+    z.finish().unwrap();
+
+    let root = tmp.join("addons");
+    let info = beany_core::builtins::addons::install(&pkg, &root).unwrap();
+    assert_eq!(
+        (info.name.as_str(), info.version.as_str()),
+        ("Demo Tools", "2.1")
+    );
+    assert!(!tmp.join("evil.m").exists());
+    let mut it = beany_core::interp::Interp::new();
+    for p in ["", "lib"] {
+        it.path.push(info.dir.join(p));
+    }
+    it.eval_string("a = demo_twice(4); b = dt.half(8);")
+        .unwrap();
+    assert_eq!(num(&it, "a"), vec![8.0]);
+    assert_eq!(num(&it, "b"), vec![4.0]);
+    assert_eq!(beany_core::builtins::addons::list(&root).len(), 1);
+    let _ = std::fs::remove_dir_all(&tmp);
+}

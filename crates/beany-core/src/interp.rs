@@ -130,6 +130,7 @@ impl Interp {
             open_models: HashMap::new(),
         };
         crate::builtins::register(&mut it);
+        crate::builtins::addons::init(&mut it);
         it
     }
 
@@ -323,10 +324,24 @@ impl Interp {
 
     /// Locate `name.m` in the current folder, then the path.
     pub fn find_file(&self, name: &str, include_path: bool) -> Option<PathBuf> {
-        if name.is_empty() || name.contains(['/', '\\', '.']) {
+        if name.is_empty() || name.contains(['/', '\\']) {
             return None;
         }
-        let file = format!("{}.m", name);
+        // `pkg.sub.fn` lives in `+pkg/+sub/fn.m`.
+        let file = match name.rsplit_once('.') {
+            Some((pkg, f)) => {
+                if f.is_empty() || pkg.split('.').any(|p| p.is_empty()) {
+                    return None;
+                }
+                let mut p = PathBuf::new();
+                for part in pkg.split('.') {
+                    p.push(format!("+{}", part));
+                }
+                p.push(format!("{}.m", f));
+                p
+            }
+            None => PathBuf::from(format!("{}.m", name)),
+        };
         let p = self.cwd.join(&file);
         if p.is_file() {
             return Some(p);
@@ -891,6 +906,10 @@ impl Interp {
             }
             Expr::FuncHandle(name) => vec![Value::Func(FuncHandle::Named(name.clone()))],
             Expr::Index(base, args) => {
+                if let Some(name) = self.dotted_function(base) {
+                    let argv = self.eval_args(args)?;
+                    return self.call_named(&name, argv, nargout);
+                }
                 if let Expr::Ident(name) = base.as_ref() {
                     if !self.is_var(name) {
                         let argv = self.eval_args(args)?;
@@ -929,6 +948,9 @@ impl Interp {
                 c.index(&idx)?.data
             }
             Expr::Field(base, name) => {
+                if let Some(f) = self.dotted_function(e) {
+                    return self.call_named(&f, vec![], nargout);
+                }
                 let v = self.eval(base)?;
                 field_values(&v, name)?
             }
@@ -989,6 +1011,26 @@ impl Interp {
     }
 
     // ---------- calls ----------
+
+    /// `a.b.c` names a package function (or a dotted built-in) when `a` is not a variable.
+    fn dotted_function(&self, e: &Expr) -> Option<String> {
+        fn join(e: &Expr) -> Option<(String, String)> {
+            match e {
+                Expr::Ident(n) => Some((n.clone(), n.clone())),
+                Expr::Field(b, n) => join(b).map(|(root, s)| (root, format!("{}.{}", s, n))),
+                _ => None,
+            }
+        }
+        let Expr::Field(..) = e else {
+            return None;
+        };
+        let (root, name) = join(e)?;
+        if self.is_var(&root) {
+            return None;
+        }
+        (self.builtins.contains_key(name.as_str()) || self.find_file(&name, true).is_some())
+            .then_some(name)
+    }
 
     pub fn call_named(
         &mut self,
