@@ -7,6 +7,7 @@ mod core;
 mod data;
 mod math;
 mod misc;
+pub(crate) mod numeric;
 pub mod objects;
 mod plot;
 mod stats;
@@ -37,6 +38,7 @@ pub fn register(it: &mut Interp) {
     addons::register(it);
     control::register(it);
     misc::register(it);
+    numeric::register(it);
     complex::register(it);
 }
 
